@@ -1,35 +1,84 @@
 from __future__ import annotations
 import csv
+import time
+from itertools import groupby
 from pathlib import Path
 from flask import Flask, render_template_string
 
 app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 CSV_PATH = BASE_DIR / "csv" / "books.csv"
-NEXT_COUNT = 10
+CREDENTIALS_PATH = BASE_DIR / "credentials.json"
+SHEET_ID = "1WuO8vyFegtg6eI7f9V4eMm6vMkzxhDCo1DfSBT-pnDo"
+CACHE_TTL = 300  # seconds before re-fetching from Sheets
+NEXT_COUNT = 5
 
 UNREAD = {"", None}
+_cache: dict = {"books": None, "ts": 0.0}
+
+
+def _clean_rows(headers: list[str], raw_rows: list[dict | list]) -> list[dict]:
+    if headers and headers[0] == "":
+        headers[0] = "Author"
+    books = []
+    for row in raw_rows:
+        if isinstance(row, list):
+            row = dict(zip(headers, row))
+        if not row.get("Title", "").strip():
+            continue
+        try:
+            row["Year"] = str(abs(int(row["Year"])))
+        except (ValueError, TypeError):
+            row["Year"] = ""
+        row["Author"] = row.get("Author", "").strip()
+        row["Rob"] = row.get("Rob", "").strip()
+        row["Mom"] = row.get("Mom", "").strip()
+        books.append(row)
+    return books
+
+
+def load_books_from_sheets() -> list[dict]:
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    now = time.monotonic()
+    if _cache["books"] is not None and now - _cache["ts"] < CACHE_TTL:
+        return _cache["books"]
+
+    creds = Credentials.from_service_account_file(
+        CREDENTIALS_PATH,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+    )
+    client = gspread.authorize(creds)
+    ws = client.open_by_key(SHEET_ID).sheet1
+    all_values = ws.get_all_values()
+    if not all_values:
+        return []
+
+    headers = [h.strip() for h in all_values[0]]
+    books = _clean_rows(headers, all_values[1:])
+    _cache["books"] = books
+    _cache["ts"] = now
+    return books
 
 
 def load_books() -> list[dict]:
+    if SHEET_ID and CREDENTIALS_PATH.exists():
+        try:
+            return load_books_from_sheets()
+        except Exception as e:
+            app.logger.warning(f"Sheets load failed, falling back to CSV: {e}")
+
     books = []
     with open(CSV_PATH, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        # First column has no header in the CSV; rename it to "Author"
-        if reader.fieldnames and reader.fieldnames[0] == "":
-            reader.fieldnames = ["Author"] + list(reader.fieldnames[1:])
+        headers = list(reader.fieldnames or [])
         for row in reader:
-            if not row.get("Title", "").strip():
-                continue
-            try:
-                row["Year"] = str(abs(int(row["Year"])))
-            except (ValueError, TypeError):
-                row["Year"] = ""
-            row["Author"] = row.get("Author", "").strip()
-            row["Rob"] = row.get("Rob", "").strip()
-            row["Mom"] = row.get("Mom", "").strip()
-            books.append(row)
-    return books
+            books.append(dict(row))
+    return _clean_rows(headers, books)
 
 
 def next_to_read(books: list[dict], n: int = NEXT_COUNT) -> list[dict]:
@@ -170,6 +219,31 @@ TEMPLATE = """<!DOCTYPE html>
   .badge-unread  { background: transparent; color: var(--muted); border: 1px solid var(--border); }
 
   .count-note { color: var(--muted); font-size: 0.82rem; margin-top: 0.5rem; }
+
+  /* ---- Author group rows ---- */
+  .author-row { cursor: pointer; user-select: none; background: var(--surface); }
+  .author-row:hover { background: #2a2e45; }
+  .author-row td {
+    padding: 0.55rem 1rem;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+  }
+  .author-row .chevron {
+    display: inline-block;
+    margin-right: 0.5rem;
+    transition: transform .2s;
+    font-style: normal;
+    color: var(--muted);
+  }
+  .author-row.collapsed .chevron { transform: rotate(-90deg); }
+  .author-row .book-count {
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-weight: 400;
+    margin-left: 0.5rem;
+  }
 </style>
 </head>
 <body>
@@ -182,7 +256,7 @@ TEMPLATE = """<!DOCTYPE html>
 <div class="container">
 
   <!-- NEXT TO READ -->
-  <p class="section-title">Next {{ next_books|length }} for Rob</p>
+  <p class="section-title">Next Reads</p>
   <div class="next-grid">
     {% for b in next_books %}
     <div class="book-card">
@@ -216,25 +290,34 @@ TEMPLATE = """<!DOCTYPE html>
           <th>Series</th>
           <th>Title</th>
           <th>Year</th>
-          <th>Rob</th>
-          <th>Mom</th>
+          <th>Status</th>
         </tr>
       </thead>
       <tbody>
-        {% for b in books %}
-        <tr
+        {% for group in grouped_books %}
+        {% set gid = loop.index %}
+        <tr class="author-row" data-group="{{ gid }}" onclick="toggleGroup(this)">
+          <td colspan="5">
+            <i class="chevron">&#9660;</i>
+            {{ group.author }}
+            <span class="book-count">{{ group.books|length }} books</span>
+          </td>
+        </tr>
+        {% for b in group.books %}
+        <tr class="book-row"
+          data-group="{{ gid }}"
           data-title="{{ b.Title|lower }}"
           data-author="{{ b.Author|lower }}"
           data-series="{{ b.Series|lower }}"
           data-rob="{{ b.Rob|lower }}"
         >
-          <td>{{ b.Author or '—' }}</td>
+          <td></td>
           <td style="color:var(--muted)">{{ b.Series }}</td>
           <td>{{ b.Title }}</td>
           <td style="color:var(--muted)">{{ b.Year }}</td>
-          <td>{{ badge(b.Rob) }}</td>
-          <td>{{ badge(b.Mom) }}</td>
+          <td>{{ badge(b.Rob) | safe }}</td>
         </tr>
+        {% endfor %}
         {% endfor %}
       </tbody>
     </table>
@@ -245,18 +328,20 @@ TEMPLATE = """<!DOCTYPE html>
 <script>
   let activeFilter = 'all';
 
-  function badge(status) {
-    if (!status) return '';
-    const cls = { read:'badge-read', reading:'badge-reading', hold:'badge-hold', 'n/a':'badge-na' }[status.toLowerCase()] || 'badge-unread';
-    return `<span class="badge ${cls}">${status}</span>`;
+  function toggleGroup(authorRow) {
+    const group = authorRow.dataset.group;
+    const collapsed = authorRow.classList.toggle('collapsed');
+    document.querySelectorAll(`.book-row[data-group="${group}"]`).forEach(r => {
+      r.style.display = collapsed ? 'none' : '';
+    });
   }
 
-  // Re-render badge cells (Jinja already did this server-side; JS handles dynamic filtering display)
   function filterTable() {
     const q = document.getElementById('search').value.toLowerCase();
-    const rows = document.querySelectorAll('#book-table tbody tr');
-    let visible = 0;
-    rows.forEach(row => {
+    const bookRows = document.querySelectorAll('#book-table tbody .book-row');
+    const groupVisible = {};
+
+    bookRows.forEach(row => {
       const matchSearch = !q ||
         row.dataset.title.includes(q) ||
         row.dataset.author.includes(q) ||
@@ -269,9 +354,26 @@ TEMPLATE = """<!DOCTYPE html>
         (activeFilter === 'reading' && rob === 'reading');
       const show = matchSearch && matchFilter;
       row.style.display = show ? '' : 'none';
-      if (show) visible++;
+      const g = row.dataset.group;
+      groupVisible[g] = (groupVisible[g] || 0) + (show ? 1 : 0);
     });
-    document.getElementById('count-note').textContent = `Showing ${visible} books`;
+
+    // Show/hide author rows; auto-expand when search has results
+    let totalVisible = 0;
+    document.querySelectorAll('#book-table tbody .author-row').forEach(authorRow => {
+      const g = authorRow.dataset.group;
+      const count = groupVisible[g] || 0;
+      authorRow.style.display = count > 0 ? '' : 'none';
+      if (q && count > 0) {
+        authorRow.classList.remove('collapsed');
+        document.querySelectorAll(`.book-row[data-group="${g}"]`).forEach(r => {
+          if (r.style.display !== 'none') r.style.display = '';
+        });
+      }
+      totalVisible += count;
+    });
+
+    document.getElementById('count-note').textContent = `Showing ${totalVisible} books`;
   }
 
   function setFilter(btn) {
@@ -281,7 +383,6 @@ TEMPLATE = """<!DOCTYPE html>
     filterTable();
   }
 
-  // Initial count
   filterTable();
 </script>
 </body>
@@ -299,12 +400,22 @@ def badge(status: str) -> str:
     return f'<span class="badge {cls}">{label}</span>'
 
 
+def sort_key(b: dict):
+    year = int(b["Year"]) if b["Year"].isdigit() else 0
+    return (b["Author"].lower(), b["Series"].lower(), year)
+
+
 @app.route("/")
 def index():
     books = load_books()
+    sorted_books = sorted(books, key=sort_key)
+    grouped_books = [
+        {"author": author or "—", "books": list(group)}
+        for author, group in groupby(sorted_books, key=lambda b: b["Author"])
+    ]
     return render_template_string(
         TEMPLATE,
-        books=books,
+        grouped_books=grouped_books,
         next_books=next_to_read(books),
         total=len(books),
         badge=badge,

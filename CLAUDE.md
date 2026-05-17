@@ -42,6 +42,20 @@ python app.py
 - ~15 blank rows in CSV — app skips rows where `Title` is empty
 - Last row has missing Author/Series — handled gracefully
 
+## Google Sheets Integration
+The app reads book data from a Google Sheet (falling back to `csv/books.csv` if unavailable).
+
+- **Sheet ID:** `1WuO8vyFegtg6eI7f9V4eMm6vMkzxhDCo1DfSBT-pnDo`
+- **Sheet URL:** https://drive.google.com/drive/folders/1jxJ6MIjZEe0O_fV6E47j05Zq9PTDFxVi
+- **Service account:** `reading-jouney-app@reading-jouney.iam.gserviceaccount.com`
+- **Credentials file:** `credentials.json` in project root (git-ignored — never commit this)
+- **Cache:** Sheet data is cached for 5 minutes (`CACHE_TTL = 300` in app.py)
+
+To set up on a new machine:
+1. Get `credentials.json` from the Google Cloud Console (or from a secure store)
+2. Place it in the project root
+3. `SHEET_ID` is already set in `app.py`
+
 ## Git & GitHub
 - **Repo:** `reading_journey` on GitHub (rogersonra)
 - **Branch:** `main`
