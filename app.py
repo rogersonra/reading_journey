@@ -230,20 +230,35 @@ TEMPLATE = """<!DOCTYPE html>
     color: var(--accent);
     border-bottom: 1px solid var(--border);
   }
-  .author-row .chevron {
+  /* ---- Series group rows ---- */
+  .series-row { cursor: pointer; user-select: none; background: #161926; }
+  .series-row:hover { background: #1e2235; }
+  .series-row td {
+    padding: 0.45rem 1rem 0.45rem 2.5rem;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+  /* ---- Shared chevron ---- */
+  .author-row .chevron, .series-row .chevron {
     display: inline-block;
-    margin-right: 0.5rem;
+    margin-right: 0.4rem;
     transition: transform .2s;
     font-style: normal;
     color: var(--muted);
+    font-size: 0.7rem;
   }
-  .author-row.collapsed .chevron { transform: rotate(-90deg); }
-  .author-row .book-count {
+  .author-row.collapsed .chevron,
+  .series-row.collapsed .chevron { transform: rotate(-90deg); }
+  .book-count {
     font-size: 0.75rem;
     color: var(--muted);
     font-weight: 400;
-    margin-left: 0.5rem;
+    margin-left: 0.4rem;
   }
+  /* ---- Book rows indented under series ---- */
+  .book-row td:first-child { padding-left: 3.5rem; }
 </style>
 </head>
 <body>
@@ -286,8 +301,6 @@ TEMPLATE = """<!DOCTYPE html>
     <table id="book-table">
       <thead>
         <tr>
-          <th>Author</th>
-          <th>Series</th>
           <th>Title</th>
           <th>Year</th>
           <th>Status</th>
@@ -295,28 +308,37 @@ TEMPLATE = """<!DOCTYPE html>
       </thead>
       <tbody>
         {% for group in grouped_books %}
-        {% set gid = loop.index %}
-        <tr class="author-row" data-group="{{ gid }}" onclick="toggleGroup(this)">
-          <td colspan="5">
+        {% set aid = loop.index %}
+        <tr class="author-row" data-aid="{{ aid }}" onclick="toggleAuthor(this)">
+          <td colspan="3">
             <i class="chevron">&#9660;</i>
             {{ group.author }}
-            <span class="book-count">{{ group.books|length }} books</span>
+            <span class="book-count">{{ group.total }} books</span>
           </td>
         </tr>
-        {% for b in group.books %}
+        {% for sg in group.series_groups %}
+        {% set sid = aid ~ '-' ~ loop.index %}
+        <tr class="series-row" data-aid="{{ aid }}" data-sid="{{ sid }}" onclick="toggleSeries(event, this)">
+          <td colspan="3">
+            <i class="chevron">&#9660;</i>
+            {{ sg.series }}
+            <span class="book-count">{{ sg.books|length }}</span>
+          </td>
+        </tr>
+        {% for b in sg.books %}
         <tr class="book-row"
-          data-group="{{ gid }}"
+          data-aid="{{ aid }}"
+          data-sid="{{ sid }}"
           data-title="{{ b.Title|lower }}"
           data-author="{{ b.Author|lower }}"
           data-series="{{ b.Series|lower }}"
           data-rob="{{ b.Rob|lower }}"
         >
-          <td></td>
-          <td style="color:var(--muted)">{{ b.Series }}</td>
           <td>{{ b.Title }}</td>
           <td style="color:var(--muted)">{{ b.Year }}</td>
           <td>{{ badge(b.Rob) | safe }}</td>
         </tr>
+        {% endfor %}
         {% endfor %}
         {% endfor %}
       </tbody>
@@ -328,20 +350,31 @@ TEMPLATE = """<!DOCTYPE html>
 <script>
   let activeFilter = 'all';
 
-  function toggleGroup(authorRow) {
-    const group = authorRow.dataset.group;
+  function toggleAuthor(authorRow) {
+    const aid = authorRow.dataset.aid;
     const collapsed = authorRow.classList.toggle('collapsed');
-    document.querySelectorAll(`.book-row[data-group="${group}"]`).forEach(r => {
+    document.querySelectorAll(`.series-row[data-aid="${aid}"], .book-row[data-aid="${aid}"]`).forEach(r => {
+      r.style.display = collapsed ? 'none' : '';
+      if (!collapsed && r.classList.contains('series-row')) {
+        r.classList.remove('collapsed');
+      }
+    });
+  }
+
+  function toggleSeries(event, seriesRow) {
+    event.stopPropagation();
+    const sid = seriesRow.dataset.sid;
+    const collapsed = seriesRow.classList.toggle('collapsed');
+    document.querySelectorAll(`.book-row[data-sid="${sid}"]`).forEach(r => {
       r.style.display = collapsed ? 'none' : '';
     });
   }
 
   function filterTable() {
     const q = document.getElementById('search').value.toLowerCase();
-    const bookRows = document.querySelectorAll('#book-table tbody .book-row');
-    const groupVisible = {};
+    const aidVisible = {}, sidVisible = {};
 
-    bookRows.forEach(row => {
+    document.querySelectorAll('#book-table tbody .book-row').forEach(row => {
       const matchSearch = !q ||
         row.dataset.title.includes(q) ||
         row.dataset.author.includes(q) ||
@@ -354,22 +387,21 @@ TEMPLATE = """<!DOCTYPE html>
         (activeFilter === 'reading' && rob === 'reading');
       const show = matchSearch && matchFilter;
       row.style.display = show ? '' : 'none';
-      const g = row.dataset.group;
-      groupVisible[g] = (groupVisible[g] || 0) + (show ? 1 : 0);
+      aidVisible[row.dataset.aid] = (aidVisible[row.dataset.aid] || 0) + (show ? 1 : 0);
+      sidVisible[row.dataset.sid] = (sidVisible[row.dataset.sid] || 0) + (show ? 1 : 0);
     });
 
-    // Show/hide author rows; auto-expand when search has results
+    document.querySelectorAll('#book-table tbody .series-row').forEach(r => {
+      const count = sidVisible[r.dataset.sid] || 0;
+      r.style.display = count > 0 ? '' : 'none';
+      if (q && count > 0) r.classList.remove('collapsed');
+    });
+
     let totalVisible = 0;
-    document.querySelectorAll('#book-table tbody .author-row').forEach(authorRow => {
-      const g = authorRow.dataset.group;
-      const count = groupVisible[g] || 0;
-      authorRow.style.display = count > 0 ? '' : 'none';
-      if (q && count > 0) {
-        authorRow.classList.remove('collapsed');
-        document.querySelectorAll(`.book-row[data-group="${g}"]`).forEach(r => {
-          if (r.style.display !== 'none') r.style.display = '';
-        });
-      }
+    document.querySelectorAll('#book-table tbody .author-row').forEach(r => {
+      const count = aidVisible[r.dataset.aid] || 0;
+      r.style.display = count > 0 ? '' : 'none';
+      if (q && count > 0) r.classList.remove('collapsed');
       totalVisible += count;
     });
 
@@ -409,10 +441,18 @@ def sort_key(b: dict):
 def index():
     books = load_books()
     sorted_books = sorted(books, key=sort_key)
-    grouped_books = [
-        {"author": author or "—", "books": list(group)}
-        for author, group in groupby(sorted_books, key=lambda b: b["Author"])
-    ]
+    grouped_books = []
+    for author, author_group in groupby(sorted_books, key=lambda b: b["Author"]):
+        author_books = list(author_group)
+        series_groups = [
+            {"series": series or "Standalone", "books": list(sg)}
+            for series, sg in groupby(author_books, key=lambda b: b["Series"])
+        ]
+        grouped_books.append({
+            "author": author or "—",
+            "total": len(author_books),
+            "series_groups": series_groups,
+        })
     return render_template_string(
         TEMPLATE,
         grouped_books=grouped_books,
