@@ -225,6 +225,44 @@ def advance_after_status_change(sorted_books: list[dict], changed_title: str, ch
             if (s["title"], s["author"]) in unread]
 
 
+TABLE_PARTIAL = """
+{% for group in grouped_books %}
+{% set aid = loop.index %}
+<tr class="author-row" data-aid="{{ aid }}" onclick="toggleAuthor(this)">
+  <td colspan="3">
+    <i class="chevron">&#9660;</i>
+    {{ group.author }}
+    <span class="book-count">{{ group.total }} books</span>
+    <span class="pct">{{ group.read_pct }}% read</span>
+  </td>
+</tr>
+{% for sg in group.series_groups %}
+{% set sid = aid ~ '-' ~ loop.index %}
+<tr class="series-row" data-aid="{{ aid }}" data-sid="{{ sid }}" onclick="toggleSeries(event, this)">
+  <td colspan="3">
+    <i class="chevron">&#9660;</i>
+    {{ sg.series }}
+    <span class="book-count">{{ sg.books|length }}</span>
+  </td>
+</tr>
+{% for b in sg.books %}
+<tr class="book-row"
+  data-aid="{{ aid }}"
+  data-sid="{{ sid }}"
+  data-title="{{ b.Title|lower }}"
+  data-author="{{ b.Author|lower }}"
+  data-series="{{ b.Series|lower }}"
+  data-rob="{{ b.Rob|lower }}"
+>
+  <td>{{ b.Title }}</td>
+  <td style="color:var(--muted)">{{ b.Year }}</td>
+  <td>{{ badge(b.Rob) | safe }}</td>
+</tr>
+{% endfor %}
+{% endfor %}
+{% endfor %}
+"""
+
 READING_PARTIAL = """
 {% for b in reading_books %}
 <div class="book-card">
@@ -233,11 +271,8 @@ READING_PARTIAL = """
   {% if b.Series %}<div class="series">{{ b.Series }}</div>{% endif %}
   <div class="year">{{ b.Year }}</div>
   <div class="status-btns">
-    <button class="status-btn s-read" onclick="setStatus(this, {{ b.Title|tojson }}, {{ b.Author|tojson }}, 'Read')">Read</button>
-    <button class="status-btn s-hold" onclick="setStatus(this, {{ b.Title|tojson }}, {{ b.Author|tojson }}, 'Hold')">Hold</button>
-    <button class="status-btn s-na"   onclick="setStatus(this, {{ b.Title|tojson }}, {{ b.Author|tojson }}, 'n/a')">n/a</button>
+    <button class="status-btn s-read" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read" onclick="setStatus(this)">Read</button>
   </div>
-  <button class="copy-btn" onclick="copyTitle(this, {{ b.Title|tojson }})">Copy title</button>
 </div>
 {% endfor %}
 """
@@ -250,12 +285,12 @@ CARDS_PARTIAL = """
   {% if b.Series %}<div class="series">{{ b.Series }}</div>{% endif %}
   <div class="year">{{ b.Year }}</div>
   <div class="status-btns">
-    <button class="status-btn s-read"    onclick="setStatus(this, {{ b.Title|tojson }}, {{ b.Author|tojson }}, 'Read')">Read</button>
-    <button class="status-btn s-reading" onclick="setStatus(this, {{ b.Title|tojson }}, {{ b.Author|tojson }}, 'Reading')">Reading</button>
-    <button class="status-btn s-hold"    onclick="setStatus(this, {{ b.Title|tojson }}, {{ b.Author|tojson }}, 'Hold')">Hold</button>
-    <button class="status-btn s-na"      onclick="setStatus(this, {{ b.Title|tojson }}, {{ b.Author|tojson }}, 'n/a')">n/a</button>
+    <button class="status-btn s-read"    data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read"    onclick="setStatus(this)">Read</button>
+    <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
+    <button class="status-btn s-hold"    data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">Hold</button>
+    <button class="status-btn s-na"      data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
   </div>
-  <button class="copy-btn" onclick="copyTitle(this, {{ b.Title|tojson }})">Copy title</button>
+  <button class="copy-btn" data-title="{{ b.Title }}" onclick="copyTitle(this)">Copy title</button>
 </div>
 {% endfor %}
 """
@@ -502,10 +537,10 @@ TEMPLATE = """<!DOCTYPE html>
   <div class="next-grid" id="next-reads-grid">{{ cards_html | safe }}</div>
 
   <!-- READING -->
-  {% if reading_html | trim %}
-  <p class="section-title">Reading</p>
-  <div class="next-grid" id="reading-grid">{{ reading_html | safe }}</div>
-  {% endif %}
+  <div id="reading-section"{% if not reading_html | trim %} style="display:none"{% endif %}>
+    <p class="section-title">Reading</p>
+    <div class="next-grid" id="reading-grid">{{ reading_html | safe }}</div>
+  </div>
 
   <!-- ALL BOOKS -->
   <p class="section-title">All Books</p>
@@ -531,52 +566,27 @@ TEMPLATE = """<!DOCTYPE html>
           <th>Status</th>
         </tr>
       </thead>
-      <tbody>
-        {% for group in grouped_books %}
-        {% set aid = loop.index %}
-        <tr class="author-row" data-aid="{{ aid }}" onclick="toggleAuthor(this)">
-          <td colspan="3">
-            <i class="chevron">&#9660;</i>
-            {{ group.author }}
-            <span class="book-count">{{ group.total }} books</span>
-            <span class="pct">{{ group.read_pct }}% read</span>
-          </td>
-        </tr>
-        {% for sg in group.series_groups %}
-        {% set sid = aid ~ '-' ~ loop.index %}
-        <tr class="series-row" data-aid="{{ aid }}" data-sid="{{ sid }}" onclick="toggleSeries(event, this)">
-          <td colspan="3">
-            <i class="chevron">&#9660;</i>
-            {{ sg.series }}
-            <span class="book-count">{{ sg.books|length }}</span>
-          </td>
-        </tr>
-        {% for b in sg.books %}
-        <tr class="book-row"
-          data-aid="{{ aid }}"
-          data-sid="{{ sid }}"
-          data-title="{{ b.Title|lower }}"
-          data-author="{{ b.Author|lower }}"
-          data-series="{{ b.Series|lower }}"
-          data-rob="{{ b.Rob|lower }}"
-        >
-          <td>{{ b.Title }}</td>
-          <td style="color:var(--muted)">{{ b.Year }}</td>
-          <td>{{ badge(b.Rob) | safe }}</td>
-        </tr>
-        {% endfor %}
-        {% endfor %}
-        {% endfor %}
-      </tbody>
+      <tbody>{{ table_html | safe }}</tbody>
     </table>
   </div>
 
 </div>
 
 <script>
-  function setStatus(btn, title, author, status) {
+  function setStatus(btn) {
+    const title  = btn.dataset.title;
+    const author = btn.dataset.author;
+    const status = btn.dataset.status;
     btn.textContent = '…';
     btn.disabled = true;
+
+    // Capture collapse state before update
+    const expandedAuthors = new Set();
+    document.querySelectorAll('.author-row:not(.collapsed)').forEach(r => expandedAuthors.add(r.dataset.aid));
+    const expandedSeries = new Set();
+    document.querySelectorAll('.series-row:not(.collapsed)').forEach(r => expandedSeries.add(r.dataset.sid));
+    const toggleText = document.getElementById('toggleAllBtn').textContent;
+
     fetch('/update_status', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -585,7 +595,23 @@ TEMPLATE = """<!DOCTYPE html>
       if (data.ok) {
         document.getElementById('next-reads-grid').innerHTML = data.cards_html;
         const rg = document.getElementById('reading-grid');
-        if (rg) rg.innerHTML = data.reading_html;
+        const rs = document.getElementById('reading-section');
+        if (rg) {
+          rg.innerHTML = data.reading_html;
+          rs.style.display = data.reading_html.trim() ? '' : 'none';
+        }
+        // Refresh table
+        document.querySelector('#book-table tbody').innerHTML = data.table_html;
+        // Restore collapse state
+        document.getElementById('toggleAllBtn').textContent = toggleText;
+        document.querySelectorAll('.author-row').forEach(r => {
+          if (!expandedAuthors.has(r.dataset.aid)) r.classList.add('collapsed');
+        });
+        document.querySelectorAll('.series-row').forEach(r => {
+          if (!expandedSeries.has(r.dataset.sid)) r.classList.add('collapsed');
+        });
+        applyCollapseState();
+        filterTable();
       } else {
         btn.textContent = 'Error';
         btn.disabled = false;
@@ -593,7 +619,8 @@ TEMPLATE = """<!DOCTYPE html>
     }).catch(() => { btn.textContent = 'Error'; btn.disabled = false; });
   }
 
-  function copyTitle(btn, title) {
+  function copyTitle(btn) {
+    const title = btn.dataset.title;
     navigator.clipboard.writeText(title).then(() => {
       btn.textContent = 'Copied!';
       btn.classList.add('copied');
@@ -723,6 +750,25 @@ TEMPLATE = """<!DOCTYPE html>
 """
 
 
+def build_grouped_books(sorted_books: list[dict]) -> list[dict]:
+    grouped = []
+    for _, author_group in groupby(sorted_books, key=lambda b: b["Author"].lower()):
+        author_books = list(author_group)
+        series_groups = []
+        for _, sg in groupby(author_books, key=lambda b: b["Series"].lower()):
+            sg_books = list(sg)
+            series_groups.append({"series": sg_books[0]["Series"] or "Standalone", "books": sg_books})
+        read_count = sum(1 for b in author_books if b["Rob"].lower() == "read")
+        read_pct = round(read_count / len(author_books) * 100) if author_books else 0
+        grouped.append({
+            "author": author_books[0]["Author"] or "—",
+            "total": len(author_books),
+            "read_pct": read_pct,
+            "series_groups": series_groups,
+        })
+    return grouped
+
+
 def badge(status: str) -> str:
     s = (status or "").strip().lower()
     cls_map = {"read": "badge-read", "reading": "badge-reading", "hold": "badge-hold", "n/a": "badge-na"}
@@ -759,7 +805,8 @@ def update_status():
         next_books   = advance_after_status_change(sorted_books, title, author)
         cards_html   = render_template_string(CARDS_PARTIAL,   next_books=next_books)
         reading_html = render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books))
-        return {"ok": True, "cards_html": cards_html, "reading_html": reading_html}
+        table_html   = render_template_string(TABLE_PARTIAL,   grouped_books=build_grouped_books(sorted_books), badge=badge)
+        return {"ok": True, "cards_html": cards_html, "reading_html": reading_html, "table_html": table_html}
     except Exception as e:
         app.logger.error(f"update_status failed: {e}")
         return {"ok": False, "error": str(e)}, 500
@@ -769,28 +816,14 @@ def update_status():
 def index():
     books = load_books()
     sorted_books = sorted(books, key=sort_key)
-    grouped_books = []
-    for _, author_group in groupby(sorted_books, key=lambda b: b["Author"].lower()):
-        author_books = list(author_group)
-        author = author_books[0]["Author"]
-        series_groups = []
-        for _, sg in groupby(author_books, key=lambda b: b["Series"].lower()):
-            sg_books = list(sg)
-            series_groups.append({"series": sg_books[0]["Series"] or "Standalone", "books": sg_books})
-        read_count = sum(1 for b in author_books if b["Rob"].lower() == "read")
-        read_pct = round(read_count / len(author_books) * 100) if author_books else 0
-        grouped_books.append({
-            "author": author or "—",
-            "total": len(author_books),
-            "read_pct": read_pct,
-            "series_groups": series_groups,
-        })
+    grouped_books = build_grouped_books(sorted_books)
     next_books = next_to_read(sorted_books)
     cards_html   = render_template_string(CARDS_PARTIAL,   next_books=next_books)
     reading_html = render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books))
+    table_html   = render_template_string(TABLE_PARTIAL,   grouped_books=grouped_books, badge=badge)
     return render_template_string(
         TEMPLATE,
-        grouped_books=grouped_books,
+        table_html=table_html,
         cards_html=cards_html,
         reading_html=reading_html,
         total=len(books),
