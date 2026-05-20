@@ -163,13 +163,13 @@ def next_to_read(sorted_books: list[dict], n: int = NEXT_COUNT) -> list[dict]:
     state = load_state()
     saved = state.get("next_reads", [])
 
-    # Restore saved list, dropping any books that are no longer unread
-    unread = {(b["Title"], b["Author"]): b for b in sorted_books if b["Rob"] in UNREAD}
+    # Restore saved list, keeping unread and on-hold books
+    available = _available_books(sorted_books)
     restored = []
     for item in saved:
         key = (item["title"], item["author"])
-        if key in unread:
-            restored.append(unread[key])
+        if key in available:
+            restored.append(available[key])
 
     if len(restored) == n:
         return restored  # saved list is complete — use it unchanged
@@ -197,10 +197,24 @@ def next_to_read(sorted_books: list[dict], n: int = NEXT_COUNT) -> list[dict]:
     return selected
 
 
-def advance_after_status_change(sorted_books: list[dict], changed_title: str, changed_author: str) -> list[dict]:
+def _available_books(sorted_books: list[dict]) -> dict:
+    """Books eligible to appear in Next Reads: unread or on hold."""
+    return {(b["Title"], b["Author"]): b for b in sorted_books
+            if b["Rob"] in UNREAD or b["Rob"] == "Hold"}
+
+
+def advance_after_status_change(sorted_books: list[dict], changed_title: str, changed_author: str, new_status: str = "") -> list[dict]:
     """Replace only the changed book with the next unread book from rotation."""
     state = load_state()
     saved = state.get("next_reads", [])
+    available = _available_books(sorted_books)
+
+    # Hold: keep the book in place, no replacement needed
+    if new_status == "Hold":
+        state["next_reads"] = saved
+        save_state(state)
+        return [available[(s["title"], s["author"])] for s in saved
+                if (s["title"], s["author"]) in available]
 
     # Remove the book whose status changed
     remaining = [s for s in saved
@@ -220,9 +234,8 @@ def advance_after_status_change(sorted_books: list[dict], changed_title: str, ch
     state["next_reads"] = remaining
     save_state(state)
 
-    unread = {(b["Title"], b["Author"]): b for b in sorted_books if b["Rob"] in UNREAD}
-    return [unread[(s["title"], s["author"])] for s in remaining
-            if (s["title"], s["author"]) in unread]
+    return [available[(s["title"], s["author"])] for s in remaining
+            if (s["title"], s["author"]) in available]
 
 
 TABLE_PARTIAL = """
@@ -285,10 +298,10 @@ CARDS_PARTIAL = """
   {% if b.Series %}<div class="series">{{ b.Series }}</div>{% endif %}
   <div class="year">{{ b.Year }}</div>
   <div class="status-btns">
-    <button class="status-btn s-read"    data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read"    onclick="setStatus(this)">Read</button>
-    <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
-    <button class="status-btn s-hold"    data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">Hold</button>
-    <button class="status-btn s-na"      data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
+    <button class="status-btn s-read{% if b.Rob == 'Read' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read"    onclick="setStatus(this)">Read</button>
+    <button class="status-btn s-reading{% if b.Rob == 'Reading' %} btn-active{% endif %}" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
+    <button class="status-btn s-hold{% if b.Rob == 'Hold' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">Hold</button>
+    <button class="status-btn s-na{% if b.Rob == 'n/a' %} btn-active{% endif %}"          data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
   </div>
   <button class="copy-btn" data-title="{{ b.Title }}" onclick="copyTitle(this)">Copy title</button>
 </div>
@@ -380,6 +393,8 @@ TEMPLATE = """<!DOCTYPE html>
   .status-btn.s-reading { background: rgba(245,166,35,.2);  color: var(--amber); border-color: var(--amber); }
   .status-btn.s-hold    { background: rgba(91,192,222,.2);  color: var(--blue);  border-color: var(--blue); }
   .status-btn.s-na      { background: rgba(122,127,153,.15);color: var(--muted); border-color: var(--border); }
+  .status-btn.btn-active { box-shadow: 0 0 0 2px currentColor; font-weight: 700; }
+  .status-btn.s-hold.btn-active { background: rgba(91,192,222,.45); }
 
   .copy-btn {
     margin-top: 0.5rem;
@@ -802,7 +817,7 @@ def update_status():
         _cache["books"] = None
         books = load_books()
         sorted_books = sorted(books, key=sort_key)
-        next_books   = advance_after_status_change(sorted_books, title, author)
+        next_books   = advance_after_status_change(sorted_books, title, author, status)
         cards_html   = render_template_string(CARDS_PARTIAL,   next_books=next_books)
         reading_html = render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books))
         table_html   = render_template_string(TABLE_PARTIAL,   grouped_books=build_grouped_books(sorted_books), badge=badge)
