@@ -10,7 +10,7 @@ app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 CSV_PATH = BASE_DIR / "csv" / "books.csv"
 CREDENTIALS_PATH = BASE_DIR / "credentials.json"
-SHEET_ID = "1WuO8vyFegtg6eI7f9V4eMm6vMkzxhDCo1DfSBT-pnDo"
+from config import SHEET_ID, BOOKS_API_KEY
 STATE_PATH = BASE_DIR / "state.json"
 CACHE_TTL = 300  # seconds before re-fetching from Sheets
 NEXT_COUNT = 5
@@ -247,6 +247,7 @@ TABLE_PARTIAL = """
     {{ group.author }}
     <span class="book-count">{{ group.total }} books</span>
     <span class="pct">{{ group.read_pct }}% read</span>
+    <button class="find-btn" onclick="event.stopPropagation();findNewBooks('{{ group.author }}')">+ Find new books</button>
   </td>
 </tr>
 {% for sg in group.series_groups %}
@@ -338,9 +339,30 @@ TEMPLATE = """<!DOCTYPE html>
     display: flex;
     align-items: center;
     gap: 1rem;
+    flex-wrap: wrap;
   }
   header h1 { font-size: 1.4rem; font-weight: 700; color: var(--accent); }
   header span { color: var(--muted); font-size: 0.9rem; }
+  #author-search-wrap { display: flex; gap: 0.5rem; margin-left: auto; }
+  #author-search-input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 0.4rem 0.75rem;
+    font-size: 0.9rem;
+    outline: none;
+    width: 220px;
+  }
+  #author-search-input:focus { border-color: var(--accent); }
+  #author-search-btn {
+    background: var(--accent); color: #fff;
+    border: none; border-radius: 6px;
+    padding: 0.4rem 0.85rem;
+    font-size: 0.85rem; cursor: pointer;
+    white-space: nowrap;
+  }
+  #author-search-btn:hover { opacity: 0.85; }
 
   .container { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem; }
 
@@ -535,6 +557,81 @@ TEMPLATE = """<!DOCTYPE html>
     white-space: nowrap;
   }
   #toggleAllBtn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* ---- Find new books button ---- */
+  .find-btn {
+    float: right;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 4px;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .find-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* ---- Add books modal ---- */
+  #add-modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.6);
+    z-index: 100;
+  }
+  #add-modal-box {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    z-index: 101;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: min(640px, 95vw);
+    max-height: 80vh;
+    display: flex; flex-direction: column;
+  }
+  #add-modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+  #add-modal-header button {
+    background: none; border: none; color: var(--muted);
+    font-size: 1.1rem; cursor: pointer; line-height: 1;
+  }
+  #add-modal-body { overflow-y: auto; padding: 1rem 1.25rem; flex: 1; }
+  #add-modal-footer {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.75rem 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+  #add-modal-count { color: var(--muted); font-size: 0.85rem; }
+  #add-modal-submit {
+    background: var(--accent); color: #fff;
+    border: none; border-radius: 6px;
+    padding: 0.45rem 1rem; font-size: 0.85rem; cursor: pointer;
+  }
+  #add-modal-submit:disabled { opacity: 0.6; cursor: default; }
+  .modal-series-group {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+  }
+  .modal-series-header {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.55rem 0.85rem;
+    background: var(--surface);
+    font-weight: 600; color: var(--accent); font-size: 0.85rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-book-row {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.35rem 0.85rem;
+    font-size: 0.85rem; border-bottom: 1px solid var(--border);
+  }
+  .modal-book-row:last-child { border-bottom: none; }
+  .modal-book-year { color: var(--muted); margin-left: auto; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -542,6 +639,11 @@ TEMPLATE = """<!DOCTYPE html>
 <header>
   <h1>Reading Journey</h1>
   <span>{{ total }} books</span>
+  <div id="author-search-wrap">
+    <input id="author-search-input" type="text" placeholder="Search for an author…"
+           onkeydown="if(event.key==='Enter')searchAuthor()">
+    <button id="author-search-btn" onclick="searchAuthor()">Find new books</button>
+  </div>
 </header>
 
 <div class="container">
@@ -584,6 +686,22 @@ TEMPLATE = """<!DOCTYPE html>
     </table>
   </div>
 
+</div>
+
+<!-- ADD BOOKS MODAL -->
+<div id="add-modal" style="display:none">
+  <div id="add-modal-backdrop" onclick="closeModal()"></div>
+  <div id="add-modal-box">
+    <div id="add-modal-header">
+      <span id="add-modal-title">New books</span>
+      <button onclick="closeModal()">&#x2715;</button>
+    </div>
+    <div id="add-modal-body"></div>
+    <div id="add-modal-footer">
+      <span id="add-modal-count">0 selected</span>
+      <button id="add-modal-submit" onclick="submitNewBooks()">Add to Reading Journey</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -762,6 +880,137 @@ TEMPLATE = """<!DOCTYPE html>
   // Init: start collapsed
   collapseAll();
   filterTable();
+
+  // ---- Header author search ----
+  function searchAuthor() {
+    const val = document.getElementById('author-search-input').value.trim();
+    if (val) findNewBooks(val);
+  }
+
+  // ---- Find & add new books ----
+  let _modalAuthor = '';
+  let _modalBooks  = [];
+
+  function esc(s) {
+    return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function findNewBooks(author) {
+    _modalAuthor = author;
+    _modalBooks  = [];
+    document.getElementById('add-modal-title').textContent = 'New books — ' + author;
+    document.getElementById('add-modal-body').innerHTML = '<p style="color:var(--muted)">Loading…</p>';
+    document.getElementById('add-modal-submit').textContent = 'Add to Reading Journey';
+    document.getElementById('add-modal-submit').disabled = false;
+    updateModalCount();
+    document.getElementById('add-modal').style.display = '';
+
+    fetch('/fetch_author_books?author=' + encodeURIComponent(author))
+      .then(r => r.json())
+      .then(data => {
+        if (!data.ok) {
+          document.getElementById('add-modal-body').innerHTML = '<p style="color:var(--red)">Error loading books.</p>';
+          return;
+        }
+        let html = '';
+
+        for (const sg of data.series_groups) {
+          const seriesEsc = esc(sg.series).replace(/'/g, '&#39;');
+          html += `<div class="modal-series-group">
+            <div class="modal-series-header">
+              <input type="checkbox" onchange="toggleSeries(this,'${seriesEsc}')">
+              <span>${esc(sg.series)}</span>
+              <span style="color:var(--muted);font-weight:400;font-size:0.78rem;margin-left:auto">${sg.books.length} book${sg.books.length !== 1 ? 's' : ''}</span>
+            </div>`;
+          for (const b of sg.books) {
+            _modalBooks.push({...b, checked: false});
+            const idx = _modalBooks.length - 1;
+            html += `<div class="modal-book-row">
+              <input type="checkbox" data-idx="${idx}" onchange="toggleBook(this)">
+              <span>${esc(b.title)}</span>
+              <span class="modal-book-year">${esc(b.year)}</span>
+            </div>`;
+          }
+          html += `</div>`;
+        }
+
+        if (data.standalone.length) {
+          html += `<div class="modal-series-group">
+            <div class="modal-series-header"><span>Standalone</span>
+              <span style="color:var(--muted);font-weight:400;font-size:0.78rem;margin-left:auto">${data.standalone.length} book${data.standalone.length !== 1 ? 's' : ''}</span>
+            </div>`;
+          for (const b of data.standalone) {
+            _modalBooks.push({...b, checked: false});
+            const idx = _modalBooks.length - 1;
+            html += `<div class="modal-book-row">
+              <input type="checkbox" data-idx="${idx}" onchange="toggleBook(this)">
+              <span>${esc(b.title)}</span>
+              <span class="modal-book-year">${esc(b.year)}</span>
+            </div>`;
+          }
+          html += `</div>`;
+        }
+
+        if (!html) html = '<p style="color:var(--muted)">No new books found.</p>';
+        document.getElementById('add-modal-body').innerHTML = html;
+        updateModalCount();
+      })
+      .catch(() => {
+        document.getElementById('add-modal-body').innerHTML = '<p style="color:var(--red)">Network error.</p>';
+      });
+  }
+
+  function toggleBook(cb) {
+    _modalBooks[+cb.dataset.idx].checked = cb.checked;
+    updateModalCount();
+  }
+
+  function toggleSeries(cb, series) {
+    document.querySelectorAll('#add-modal-body input[data-idx]').forEach(el => {
+      if (_modalBooks[+el.dataset.idx].series === series) {
+        _modalBooks[+el.dataset.idx].checked = cb.checked;
+        el.checked = cb.checked;
+      }
+    });
+    updateModalCount();
+  }
+
+  function updateModalCount() {
+    const n = _modalBooks.filter(b => b.checked).length;
+    document.getElementById('add-modal-count').textContent = n + ' selected';
+  }
+
+  function closeModal() {
+    document.getElementById('add-modal').style.display = 'none';
+  }
+
+  function submitNewBooks() {
+    const selected = _modalBooks.filter(b => b.checked);
+    if (!selected.length) return;
+    const btn = document.getElementById('add-modal-submit');
+    btn.textContent = 'Adding…';
+    btn.disabled = true;
+
+    fetch('/add_books', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({author: _modalAuthor, books: selected})
+    }).then(r => r.json()).then(data => {
+      if (data.ok) {
+        document.querySelector('#book-table tbody').innerHTML = data.table_html;
+        document.getElementById('next-reads-grid').innerHTML = data.cards_html;
+        const rg = document.getElementById('reading-grid');
+        const rs = document.getElementById('reading-section');
+        if (rg) { rg.innerHTML = data.reading_html; rs.style.display = data.reading_html.trim() ? '' : 'none'; }
+        applyCollapseState();
+        filterTable();
+        closeModal();
+      } else {
+        btn.textContent = 'Error — try again';
+        btn.disabled = false;
+      }
+    }).catch(() => { btn.textContent = 'Error — try again'; btn.disabled = false; });
+  }
 </script>
 </body>
 </html>
@@ -827,6 +1076,118 @@ def update_status():
         return {"ok": True, "cards_html": cards_html, "reading_html": reading_html, "table_html": table_html}
     except Exception as e:
         app.logger.error(f"update_status failed: {e}")
+        return {"ok": False, "error": str(e)}, 500
+
+
+@app.route("/fetch_author_books")
+def fetch_author_books():
+    import urllib.request
+    import urllib.parse
+    import json as _json
+
+    author = request.args.get("author", "").strip()
+    if not author:
+        return {"ok": False, "error": "missing author"}, 400
+
+    existing = {b["Title"].lower() for b in load_books()}
+    books = []
+    start = 0
+
+    try:
+        while True:
+            url = (
+                "https://www.googleapis.com/books/v1/volumes"
+                "?q=inauthor:" + urllib.parse.quote(f'"{author}"')
+                + f"&maxResults=40&startIndex={start}&printType=books&key={BOOKS_API_KEY}"
+            )
+            with urllib.request.urlopen(url, timeout=8) as r:
+                data = _json.loads(r.read())
+
+            items = data.get("items") or []
+            if not items:
+                break
+
+            for item in items:
+                vi = item.get("volumeInfo", {})
+                title = (vi.get("title") or "").strip()
+                if not title or title.lower() in existing:
+                    continue
+                year = (vi.get("publishedDate") or "")[:4]
+
+                # Series: prefer seriesInfo, fall back to subtitle pattern
+                series = ""
+                si = vi.get("seriesInfo") or {}
+                bs = (si.get("bookSeries") or [{}])[0]
+                if bs.get("seriesId"):
+                    series = bs.get("seriesId", "")
+                if not series:
+                    subtitle = (vi.get("subtitle") or "")
+                    import re
+                    m = re.search(r"(?:A|The)\s+(.+?)\s+(?:Novel|Thriller|Series|Book)", subtitle, re.I)
+                    if m:
+                        series = m.group(1).strip()
+
+                books.append({"title": title, "year": year, "series": series})
+
+            total = data.get("totalItems", 0)
+            start += len(items)
+            if start >= min(total, 200):
+                break
+
+    except Exception as e:
+        app.logger.error(f"Google Books fetch failed: {e}")
+        return {"ok": False, "error": "fetch failed"}, 502
+
+    series_map: dict = {}
+    standalone = []
+    for b in books:
+        if b["series"]:
+            series_map.setdefault(b["series"], []).append(b)
+        else:
+            standalone.append(b)
+
+    for bks in series_map.values():
+        bks.sort(key=lambda x: x["year"] or "9999")
+    standalone.sort(key=lambda x: x["year"] or "9999")
+
+    series_groups = [{"series": s, "books": bks} for s, bks in sorted(series_map.items())]
+    return {"ok": True, "series_groups": series_groups, "standalone": standalone}
+
+
+@app.route("/add_books", methods=["POST"])
+def add_books_route():
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    data = request.get_json() or {}
+    author = data.get("author", "").strip()
+    books  = data.get("books", [])
+    if not author or not books:
+        return {"ok": False, "error": "invalid input"}, 400
+    try:
+        creds = Credentials.from_service_account_file(
+            CREDENTIALS_PATH,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        client = gspread.authorize(creds)
+        ws = client.open_by_key(SHEET_ID).sheet1
+        for b in books:
+            ws.append_row(
+                [author, b.get("series", ""), b.get("title", ""), b.get("year", ""), "", ""],
+                value_input_option="RAW",
+            )
+        _cache["books"] = None
+        all_books    = load_books()
+        sorted_books = sorted(all_books, key=sort_key)
+        next_books   = next_to_read(sorted_books)
+        return {
+            "ok": True,
+            "table_html":   render_template_string(TABLE_PARTIAL,   grouped_books=build_grouped_books(sorted_books), badge=badge),
+            "cards_html":   render_template_string(CARDS_PARTIAL,   next_books=next_books),
+            "reading_html": render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books)),
+        }
+    except Exception as e:
+        app.logger.error(f"add_books failed: {e}")
         return {"ok": False, "error": str(e)}, 500
 
 
