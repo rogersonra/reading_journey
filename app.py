@@ -303,7 +303,7 @@ CARDS_PARTIAL = """
     <button class="status-btn s-hold{% if b.Rob == 'Hold' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">Hold</button>
     <button class="status-btn s-na{% if b.Rob == 'n/a' %} btn-active{% endif %}"          data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
   </div>
-  <button class="copy-btn" data-title="{{ b.Title }}" onclick="copyTitle(this)">Copy title</button>
+  <button class="libby-btn" data-title="{{ b.Title }}" data-author="{{ b.Author }}" onclick="borrowOnLibby(this)">Borrow on Libby</button>
 </div>
 {% endfor %}
 """
@@ -396,7 +396,7 @@ TEMPLATE = """<!DOCTYPE html>
   .status-btn.btn-active { box-shadow: 0 0 0 2px currentColor; font-weight: 700; }
   .status-btn.s-hold.btn-active { background: rgba(91,192,222,.45); }
 
-  .copy-btn {
+  .libby-btn {
     margin-top: 0.5rem;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -408,8 +408,7 @@ TEMPLATE = """<!DOCTYPE html>
     transition: all .15s;
     width: 100%;
   }
-  .copy-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .copy-btn.copied { background: var(--green); color: #fff; border-color: var(--green); }
+  .libby-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
   /* ---- Controls ---- */
   .controls {
@@ -634,13 +633,17 @@ TEMPLATE = """<!DOCTYPE html>
     }).catch(() => { btn.textContent = 'Error'; btn.disabled = false; });
   }
 
-  function copyTitle(btn) {
+  function borrowOnLibby(btn) {
     const title = btn.dataset.title;
-    navigator.clipboard.writeText(title).then(() => {
-      btn.textContent = 'Copied!';
-      btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = 'Copy title'; btn.classList.remove('copied'); }, 2000);
-    });
+    const ta = document.createElement('textarea');
+    ta.value = title;
+    ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const q = encodeURIComponent(title + ' ' + btn.dataset.author);
+    window.open('https://libbyapp.com/search#query/' + q, 'libby');
   }
 
   let activeFilter = 'all';
