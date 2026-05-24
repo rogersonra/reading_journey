@@ -10,7 +10,7 @@ app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 CSV_PATH = BASE_DIR / "csv" / "books.csv"
 CREDENTIALS_PATH = BASE_DIR / "credentials.json"
-from config import SHEET_ID, BOOKS_API_KEY
+from config import SHEET_ID, HARDCOVER_TOKEN
 STATE_PATH = BASE_DIR / "state.json"
 CACHE_TTL = 300  # seconds before re-fetching from Sheets
 NEXT_COUNT = 5
@@ -557,6 +557,17 @@ TEMPLATE = """<!DOCTYPE html>
     white-space: nowrap;
   }
   #toggleAllBtn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #clearSearchBtn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 0.4rem 0.85rem;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  #clearSearchBtn:hover { background: var(--red); color: #fff; border-color: var(--red); }
 
   /* ---- Find new books button ---- */
   .find-btn {
@@ -662,7 +673,8 @@ TEMPLATE = """<!DOCTYPE html>
   <p class="section-title">All Books</p>
 
   <div class="controls">
-    <input id="search" type="text" placeholder="Search title, author, series…" oninput="filterTable()">
+    <input id="search" type="text" placeholder="Search title, author, series…" oninput="filterTable();document.getElementById('clearSearchBtn').style.display=this.value?'':'none'">
+    <button id="clearSearchBtn" onclick="clearSearch()" style="display:none">&#x2715; Clear</button>
     <div class="filters">
       <button class="filter-btn active" data-filter="all"    onclick="setFilter(this)">All</button>
       <button class="filter-btn"        data-filter="unread" onclick="setFilter(this)">Unread</button>
@@ -780,6 +792,7 @@ TEMPLATE = """<!DOCTYPE html>
   // Re-apply visibility based purely on collapsed classes (no filter active)
   function applyCollapseState() {
     document.querySelectorAll('.author-row').forEach(authorRow => {
+      authorRow.style.display = '';
       const aid = authorRow.dataset.aid;
       const authorCollapsed = authorRow.classList.contains('collapsed');
       document.querySelectorAll(`.series-row[data-aid="${aid}"]`).forEach(seriesRow => {
@@ -868,6 +881,13 @@ TEMPLATE = """<!DOCTYPE html>
   function toggleAll() {
     if (document.getElementById('toggleAllBtn').textContent.trim() === 'Expand All') expandAll();
     else collapseAll();
+  }
+
+  function clearSearch() {
+    document.getElementById('search').value = '';
+    document.getElementById('clearSearchBtn').style.display = 'none';
+    filterTable();
+    collapseAll();
   }
 
   function setFilter(btn) {
@@ -1082,74 +1102,93 @@ def update_status():
 @app.route("/fetch_author_books")
 def fetch_author_books():
     import urllib.request
-    import urllib.parse
+    import urllib.error
     import json as _json
 
     author = request.args.get("author", "").strip()
     if not author:
         return {"ok": False, "error": "missing author"}, 400
 
-    existing = {b["Title"].lower() for b in load_books()}
-    books = []
-    start = 0
+    query = """
+    query AuthorBooks($author: String!) {
+      authors(where: { name: { _eq: $author } }) {
+        contributions(limit: 100) {
+          book {
+            title
+            release_year
+            book_series(limit: 1) {
+              position
+              series { name }
+            }
+          }
+        }
+      }
+    }
+    """
 
     try:
-        while True:
-            url = (
-                "https://www.googleapis.com/books/v1/volumes"
-                "?q=inauthor:" + urllib.parse.quote(f'"{author}"')
-                + f"&maxResults=40&startIndex={start}&printType=books&key={BOOKS_API_KEY}"
-            )
-            with urllib.request.urlopen(url, timeout=8) as r:
-                data = _json.loads(r.read())
-
-            items = data.get("items") or []
-            if not items:
-                break
-
-            for item in items:
-                vi = item.get("volumeInfo", {})
-                title = (vi.get("title") or "").strip()
-                if not title or title.lower() in existing:
-                    continue
-                year = (vi.get("publishedDate") or "")[:4]
-
-                # Series: prefer seriesInfo, fall back to subtitle pattern
-                series = ""
-                si = vi.get("seriesInfo") or {}
-                bs = (si.get("bookSeries") or [{}])[0]
-                if bs.get("seriesId"):
-                    series = bs.get("seriesId", "")
-                if not series:
-                    subtitle = (vi.get("subtitle") or "")
-                    import re
-                    m = re.search(r"(?:A|The)\s+(.+?)\s+(?:Novel|Thriller|Series|Book)", subtitle, re.I)
-                    if m:
-                        series = m.group(1).strip()
-
-                books.append({"title": title, "year": year, "series": series})
-
-            total = data.get("totalItems", 0)
-            start += len(items)
-            if start >= min(total, 200):
-                break
-
+        payload = _json.dumps({
+            "query": query,
+            "variables": {"author": author},
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.hardcover.app/v1/graphql",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {HARDCOVER_TOKEN}",
+                "User-Agent": "ReadingJourney/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = _json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        app.logger.error(f"Hardcover HTTP {e.code}: {body[:500]}")
+        return {"ok": False, "error": f"HTTP {e.code}"}, 502
     except Exception as e:
-        app.logger.error(f"Google Books fetch failed: {e}")
+        app.logger.error(f"Hardcover fetch failed: {e}")
         return {"ok": False, "error": "fetch failed"}, 502
 
-    series_map: dict = {}
+    existing = {b["Title"].lower() for b in load_books()}
+
+    authors_data = ((data.get("data") or {}).get("authors") or [])
+    contributions = authors_data[0].get("contributions", []) if authors_data else []
+
+    # Deduplicate series books by (series, position); standalone by normalised title
+    series_slots: dict = {}   # (series_name, position) -> book dict
+    standalone_seen: set = set()
     standalone = []
-    for b in books:
-        if b["series"]:
-            series_map.setdefault(b["series"], []).append(b)
+
+    for c in contributions:
+        book = c.get("book")
+        if not book:
+            continue
+        title = (book.get("title") or "").strip()
+        if not title or title.lower() in existing:
+            continue
+        year = str(book.get("release_year") or "")
+        bs_list = book.get("book_series") or []
+
+        if bs_list and bs_list[0].get("series"):
+            series_name = bs_list[0]["series"]["name"]
+            position    = bs_list[0].get("position") or 0
+            key = (series_name, position)
+            if key not in series_slots:
+                series_slots[key] = {"title": title, "year": year, "series": series_name, "position": position}
         else:
-            standalone.append(b)
+            norm = title.lower().split(":")[0].strip()
+            if norm not in standalone_seen:
+                standalone_seen.add(norm)
+                standalone.append({"title": title, "year": year, "series": ""})
 
+    series_map: dict = {}
+    for (series_name, _), book in series_slots.items():
+        series_map.setdefault(series_name, []).append(book)
     for bks in series_map.values():
-        bks.sort(key=lambda x: x["year"] or "9999")
-    standalone.sort(key=lambda x: x["year"] or "9999")
+        bks.sort(key=lambda x: (x.get("position") or 0, x["year"] or "9999"))
 
+    standalone.sort(key=lambda x: x["year"] or "9999")
     series_groups = [{"series": s, "books": bks} for s, bks in sorted(series_map.items())]
     return {"ok": True, "series_groups": series_groups, "standalone": standalone}
 
@@ -1211,4 +1250,4 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, exclude_patterns=["test_*.py"])
