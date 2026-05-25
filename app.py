@@ -130,7 +130,7 @@ def update_book_status(title: str, author: str, status: str) -> None:
 
 
 def reading_books(sorted_books: list[dict]) -> list[dict]:
-    return [b for b in sorted_books if b["Rob"].lower() == "reading"]
+    return [b for b in sorted_books if b["Rob"].lower() in ("reading", "hold")]
 
 
 def _unread_by_author(sorted_books: list[dict], exclude_authors: set[str] | None = None) -> list[tuple[str, dict]]:
@@ -198,9 +198,9 @@ def next_to_read(sorted_books: list[dict], n: int = NEXT_COUNT) -> list[dict]:
 
 
 def _available_books(sorted_books: list[dict]) -> dict:
-    """Books eligible to appear in Next Reads: unread or on hold."""
+    """Books eligible to appear in Next Reads: unread only."""
     return {(b["Title"], b["Author"]): b for b in sorted_books
-            if b["Rob"] in UNREAD or b["Rob"] == "Hold"}
+            if b["Rob"] in UNREAD}
 
 
 def advance_after_status_change(sorted_books: list[dict], changed_title: str, changed_author: str, new_status: str = "") -> list[dict]:
@@ -208,13 +208,6 @@ def advance_after_status_change(sorted_books: list[dict], changed_title: str, ch
     state = load_state()
     saved = state.get("next_reads", [])
     available = _available_books(sorted_books)
-
-    # Hold: keep the book in place, no replacement needed
-    if new_status == "Hold":
-        state["next_reads"] = saved
-        save_state(state)
-        return [available[(s["title"], s["author"])] for s in saved
-                if (s["title"], s["author"]) in available]
 
     # Remove the book whose status changed
     remaining = [s for s in saved
@@ -285,7 +278,11 @@ READING_PARTIAL = """
   {% if b.Series %}<div class="series">{{ b.Series }}</div>{% endif %}
   <div class="year">{{ b.Year }}</div>
   <div class="status-btns">
+    {% if b.Rob == 'Hold' %}
+    <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
+    {% else %}
     <button class="status-btn s-read" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read" onclick="setStatus(this)">Read</button>
+    {% endif %}
   </div>
 </div>
 {% endfor %}
@@ -938,9 +935,11 @@ TEMPLATE = """<!DOCTYPE html>
           const seriesEsc = esc(sg.series).replace(/'/g, '&#39;');
           html += `<div class="modal-series-group">
             <div class="modal-series-header">
-              <input type="checkbox" onchange="toggleSeries(this,'${seriesEsc}')">
               <span>${esc(sg.series)}</span>
               <span style="color:var(--muted);font-weight:400;font-size:0.78rem;margin-left:auto">${sg.books.length} book${sg.books.length !== 1 ? 's' : ''}</span>
+              <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer;font-weight:400;font-size:0.78rem;color:var(--muted);margin-left:0.75rem">
+                <input type="checkbox" onchange="toggleSeries(this,'${seriesEsc}')"> Select all
+              </label>
             </div>`;
           for (const b of sg.books) {
             _modalBooks.push({...b, checked: false});
