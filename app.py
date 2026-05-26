@@ -277,6 +277,7 @@ READING_PARTIAL = """
   <div class="author">{{ b.Author or '—' }}</div>
   {% if b.Series %}<div class="series">{{ b.Series }}</div>{% endif %}
   <div class="year">{{ b.Year }}</div>
+  {% if b.Rob == 'Hold' %}<div style="margin-top:0.4rem"><span class="badge badge-hold">Hold</span></div>{% endif %}
   <div class="status-btns">
     {% if b.Rob == 'Hold' %}
     <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
