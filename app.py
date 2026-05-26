@@ -272,12 +272,12 @@ TABLE_PARTIAL = """
 
 READING_PARTIAL = """
 {% for b in reading_books %}
-<div class="book-card">
+<div class="book-card{% if b.Rob == 'Hold' %} hold-card{% endif %}">
   <div class="title">{{ b.Title }}</div>
   <div class="author">{{ b.Author or '—' }}</div>
   {% if b.Series %}<div class="series">{{ b.Series }}</div>{% endif %}
   <div class="year">{{ b.Year }}</div>
-  {% if b.Rob == 'Hold' %}<div style="margin-top:0.4rem"><span class="badge badge-hold">Hold</span></div>{% endif %}
+  {% if b.Rob == 'Hold' %}<div style="margin-top:0.4rem"><span class="badge badge-hold">On Hold</span></div>{% endif %}
   <div class="status-btns">
     {% if b.Rob == 'Hold' %}
     <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
@@ -299,7 +299,7 @@ CARDS_PARTIAL = """
   <div class="status-btns">
     <button class="status-btn s-read{% if b.Rob == 'Read' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read"    onclick="setStatus(this)">Read</button>
     <button class="status-btn s-reading{% if b.Rob == 'Reading' %} btn-active{% endif %}" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
-    <button class="status-btn s-hold{% if b.Rob == 'Hold' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">Hold</button>
+    <button class="status-btn s-hold{% if b.Rob == 'Hold' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">On Hold</button>
     <button class="status-btn s-na{% if b.Rob == 'n/a' %} btn-active{% endif %}"          data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
   </div>
   <button class="libby-btn" data-title="{{ b.Title }}" data-author="{{ b.Author }}" onclick="borrowOnLibby(this)">Borrow on Libby</button>
@@ -326,6 +326,7 @@ TEMPLATE = """<!DOCTYPE html>
     --amber: #f5a623;
     --blue: #5bc0de;
     --red: #e05c5c;
+    --orange: #f5923a;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; min-height: 100vh; }
@@ -411,10 +412,15 @@ TEMPLATE = """<!DOCTYPE html>
   .status-btn:hover { opacity: 0.75; }
   .status-btn.s-read    { background: rgba(76,175,125,.2);  color: var(--green); border-color: var(--green); }
   .status-btn.s-reading { background: rgba(245,166,35,.2);  color: var(--amber); border-color: var(--amber); }
-  .status-btn.s-hold    { background: rgba(91,192,222,.2);  color: var(--blue);  border-color: var(--blue); }
+  .status-btn.s-hold    { background: rgba(245,146,58,.2);  color: var(--orange); border-color: var(--orange); }
   .status-btn.s-na      { background: rgba(122,127,153,.15);color: var(--muted); border-color: var(--border); }
   .status-btn.btn-active { box-shadow: 0 0 0 2px currentColor; font-weight: 700; }
-  .status-btn.s-hold.btn-active { background: rgba(91,192,222,.45); }
+  .status-btn.s-hold.btn-active { background: rgba(245,146,58,.45); }
+  .hold-card {
+    border-color: rgba(245,146,58,.45);
+    background: rgba(245,146,58,.07);
+  }
+  .hold-card:hover { border-color: var(--orange); }
 
   .libby-btn {
     margin-top: 0.5rem;
@@ -492,7 +498,7 @@ TEMPLATE = """<!DOCTYPE html>
   }
   .badge-read    { background: rgba(76,175,125,.18); color: var(--green); }
   .badge-reading { background: rgba(245,166,35,.18); color: var(--amber); }
-  .badge-hold    { background: rgba(91,192,222,.18); color: var(--blue); }
+  .badge-hold    { background: rgba(245,146,58,.18); color: var(--orange); }
   .badge-na      { background: rgba(122,127,153,.12); color: var(--muted); }
   .badge-unread  { background: transparent; color: var(--muted); border: 1px solid var(--border); }
 
@@ -1060,7 +1066,8 @@ def badge(status: str) -> str:
     s = (status or "").strip().lower()
     cls_map = {"read": "badge-read", "reading": "badge-reading", "hold": "badge-hold", "n/a": "badge-na"}
     cls = cls_map.get(s, "badge-unread")
-    label = status.strip() if status.strip() else ""
+    display_map = {"hold": "On Hold"}
+    label = display_map.get(s, status.strip())
     if not label:
         return ""
     return f'<span class="badge {cls}">{label}</span>'
