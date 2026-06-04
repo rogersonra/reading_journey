@@ -9,10 +9,9 @@ from flask import Flask, render_template_string, request
 app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 CSV_PATH = BASE_DIR / "csv" / "books.csv"
-CREDENTIALS_PATH = BASE_DIR / "credentials.json"
-from config import SHEET_ID, HARDCOVER_TOKEN
+from config import HARDCOVER_TOKEN, PUB400_DSN, PUB400_USER, PUB400_PASS, PUB400_LIB
 STATE_PATH = BASE_DIR / "state.json"
-CACHE_TTL = 300  # seconds before re-fetching from Sheets
+CACHE_TTL = 300  # seconds before re-fetching from database
 NEXT_COUNT = 5
 
 UNREAD = {"", None}
@@ -39,41 +38,44 @@ def _clean_rows(headers: list[str], raw_rows: list[dict | list]) -> list[dict]:
     return books
 
 
-def load_books_from_sheets() -> list[dict]:
-    import gspread
-    from google.oauth2.service_account import Credentials
+_DB_COLS = ("Author", "Series", "Title", "Year", "Rob", "Mom")
 
+
+def _db_conn():
+    import pyodbc
+    return pyodbc.connect(
+        driver='{IBM i Access ODBC Driver}',
+        System=PUB400_DSN,
+        Uid=PUB400_USER,
+        Pwd=PUB400_PASS,
+        nam=1,
+        dbq=', *LIBL',
+        translate=1,
+        CCSID=1208,
+        autocommit=True,
+    )
+
+
+def load_books_from_db() -> list[dict]:
     now = time.monotonic()
     if _cache["books"] is not None and now - _cache["ts"] < CACHE_TTL:
         return _cache["books"]
 
-    creds = Credentials.from_service_account_file(
-        CREDENTIALS_PATH,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets.readonly",
-            "https://www.googleapis.com/auth/drive.readonly",
-        ],
-    )
-    client = gspread.authorize(creds)
-    ws = client.open_by_key(SHEET_ID).sheet1
-    all_values = ws.get_all_values()
-    if not all_values:
-        return []
-
-    headers = [h.strip() for h in all_values[0]]
-    books = _clean_rows(headers, all_values[1:])
+    conn = _db_conn()
+    cursor = conn.execute("SELECT AUTHOR, SERIES, TITLE, YEAR, ROB, MOM FROM BOOKS")
+    rows = [dict(zip(_DB_COLS, row)) for row in cursor.fetchall()]
+    conn.close()
+    books = _clean_rows(list(_DB_COLS), rows)
     _cache["books"] = books
     _cache["ts"] = now
     return books
 
 
 def load_books() -> list[dict]:
-    if SHEET_ID and CREDENTIALS_PATH.exists():
-        try:
-            return load_books_from_sheets()
-        except Exception as e:
-            app.logger.warning(f"Sheets load failed, falling back to CSV: {e}")
-
+    try:
+        return load_books_from_db()
+    except Exception as e:
+        app.logger.warning(f"DB load failed, falling back to CSV: {e}")
     books = []
     with open(CSV_PATH, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -97,36 +99,13 @@ def save_state(state: dict) -> None:
 
 
 def update_book_status(title: str, author: str, status: str) -> None:
-    import gspread
-    from google.oauth2.service_account import Credentials
-
-    creds = Credentials.from_service_account_file(
-        CREDENTIALS_PATH,
-        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    conn = _db_conn()
+    conn.execute(
+        "UPDATE BOOKS SET ROB = ? WHERE TITLE = ? AND AUTHOR = ?",
+        (status, title, author),
     )
-    client = gspread.authorize(creds)
-    ws = client.open_by_key(SHEET_ID).sheet1
-    all_values = ws.get_all_values()
-    if not all_values:
-        return
-
-    headers = [h.strip() for h in all_values[0]]
-    if headers and headers[0] == "":
-        headers[0] = "Author"
-
-    try:
-        author_col = headers.index("Author")
-        title_col  = headers.index("Title")
-        rob_col    = headers.index("Rob") + 1  # gspread update_cell is 1-indexed
-    except ValueError:
-        return
-
-    for row_idx, row in enumerate(all_values[1:], start=2):
-        row_title  = row[title_col].strip()  if len(row) > title_col  else ""
-        row_author = row[author_col].strip() if len(row) > author_col else ""
-        if row_title == title and row_author == author:
-            ws.update_cell(row_idx, rob_col, status)
-            return
+    conn.commit()
+    conn.close()
 
 
 def reading_books(sorted_books: list[dict]) -> list[dict]:
@@ -1203,26 +1182,25 @@ def fetch_author_books():
 
 @app.route("/add_books", methods=["POST"])
 def add_books_route():
-    import gspread
-    from google.oauth2.service_account import Credentials
-
     data = request.get_json() or {}
     author = data.get("author", "").strip()
     books  = data.get("books", [])
     if not author or not books:
         return {"ok": False, "error": "invalid input"}, 400
     try:
-        creds = Credentials.from_service_account_file(
-            CREDENTIALS_PATH,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
-        )
-        client = gspread.authorize(creds)
-        ws = client.open_by_key(SHEET_ID).sheet1
+        conn = _db_conn()
         for b in books:
-            ws.append_row(
-                [author, b.get("series", ""), b.get("title", ""), b.get("year", ""), "", ""],
-                value_input_option="RAW",
+            year = b.get("year", "")
+            try:
+                year_val = int(year)
+            except (TypeError, ValueError):
+                year_val = None
+            conn.execute(
+                "INSERT INTO BOOKS (AUTHOR, SERIES, TITLE, YEAR, ROB, MOM) VALUES (?, ?, ?, ?, '', '')",
+                (author, b.get("series", ""), b.get("title", ""), year_val),
             )
+        conn.commit()
+        conn.close()
         _cache["books"] = None
         all_books    = load_books()
         sorted_books = sorted(all_books, key=sort_key)
