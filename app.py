@@ -130,7 +130,8 @@ def update_book_status(title: str, author: str, status: str) -> None:
 
 
 def reading_books(sorted_books: list[dict]) -> list[dict]:
-    return [b for b in sorted_books if b["Rob"].lower() in ("reading", "hold")]
+    books = [b for b in sorted_books if b["Rob"].lower() in ("reading", "hold")]
+    return sorted(books, key=lambda b: 0 if b["Rob"].lower() == "reading" else 1)
 
 
 def _unread_by_author(sorted_books: list[dict], exclude_authors: set[str] | None = None) -> list[tuple[str, dict]]:
