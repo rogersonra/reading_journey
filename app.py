@@ -1045,7 +1045,13 @@ TEMPLATE = """<!DOCTYPE html>
           document.getElementById('add-modal-body').innerHTML = '<p style="color:var(--red)">Error loading books.</p>';
           return;
         }
-        let html = '';
+        const totalBooks = data.series_groups.reduce((n, sg) => n + sg.books.length, 0) + data.standalone.length;
+        let html = totalBooks ? `
+          <div style="padding:0.3rem 0 0.9rem;display:flex;align-items:center;gap:0.4rem">
+            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem;color:var(--muted)">
+              <input type="checkbox" id="modal-select-all" onchange="toggleAllModal(this)"> Select all ${totalBooks} book${totalBooks !== 1 ? 's' : ''}
+            </label>
+          </div>` : '';
 
         for (const sg of data.series_groups) {
           const seriesEsc = esc(sg.series).replace(/'/g, '&#39;');
@@ -1071,8 +1077,12 @@ TEMPLATE = """<!DOCTYPE html>
 
         if (data.standalone.length) {
           html += `<div class="modal-series-group">
-            <div class="modal-series-header"><span>Standalone</span>
+            <div class="modal-series-header">
+              <span>Standalone</span>
               <span style="color:var(--muted);font-weight:400;font-size:0.78rem;margin-left:auto">${data.standalone.length} book${data.standalone.length !== 1 ? 's' : ''}</span>
+              <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer;font-weight:400;font-size:0.78rem;color:var(--muted);margin-left:0.75rem">
+                <input type="checkbox" onchange="toggleStandalone(this)"> Select all
+              </label>
             </div>`;
           for (const b of data.standalone) {
             _modalBooks.push({...b, checked: false});
@@ -1106,6 +1116,27 @@ TEMPLATE = """<!DOCTYPE html>
         _modalBooks[+el.dataset.idx].checked = cb.checked;
         el.checked = cb.checked;
       }
+    });
+    updateModalCount();
+  }
+
+  function toggleStandalone(cb) {
+    document.querySelectorAll('#add-modal-body input[data-idx]').forEach(el => {
+      if (_modalBooks[+el.dataset.idx].series === '') {
+        _modalBooks[+el.dataset.idx].checked = cb.checked;
+        el.checked = cb.checked;
+      }
+    });
+    updateModalCount();
+  }
+
+  function toggleAllModal(cb) {
+    _modalBooks.forEach(b => b.checked = cb.checked);
+    document.querySelectorAll('#add-modal-body input[data-idx]').forEach(el => {
+      el.checked = cb.checked;
+    });
+    document.querySelectorAll('#add-modal-body input[type="checkbox"]:not([data-idx])').forEach(el => {
+      el.checked = cb.checked;
     });
     updateModalCount();
   }
