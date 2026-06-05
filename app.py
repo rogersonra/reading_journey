@@ -215,7 +215,7 @@ TABLE_PARTIAL = """
 {% for group in grouped_books %}
 {% set aid = loop.index %}
 <tr class="author-row" data-aid="{{ aid }}" onclick="toggleAuthor(this)">
-  <td colspan="3">
+  <td colspan="4">
     <i class="chevron">&#9660;</i>
     {{ group.author }}
     <span class="book-count">{{ group.total }} books</span>
@@ -226,7 +226,7 @@ TABLE_PARTIAL = """
 {% for sg in group.series_groups %}
 {% set sid = aid ~ '-' ~ loop.index %}
 <tr class="series-row" data-aid="{{ aid }}" data-sid="{{ sid }}" onclick="toggleSeries(event, this)">
-  <td colspan="3">
+  <td colspan="4">
     <i class="chevron">&#9660;</i>
     {{ sg.series }}
     <span class="book-count">{{ sg.books|length }}</span>
@@ -244,6 +244,13 @@ TABLE_PARTIAL = """
   <td>{{ b.Title }}</td>
   <td style="color:var(--muted)">{{ b.Year }}</td>
   <td>{{ badge(b.Rob) | safe }}</td>
+  <td style="white-space:nowrap">
+    <button class="edit-btn" onclick="event.stopPropagation();openEditModal(this)"
+      data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-series="{{ b.Series }}"
+      data-year="{{ b.Year }}" data-rob="{{ b.Rob }}" data-mom="{{ b.Mom }}">&#9998;</button>
+    <button class="delete-btn" onclick="event.stopPropagation();deleteBook(this)"
+      data-title="{{ b.Title }}" data-author="{{ b.Author }}">&#x1F5D1;</button>
+  </td>
 </tr>
 {% endfor %}
 {% endfor %}
@@ -567,6 +574,86 @@ TEMPLATE = """<!DOCTYPE html>
   }
   .find-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+  .edit-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 4px;
+    padding: 0.15rem 0.45rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .edit-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .delete-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 4px;
+    padding: 0.15rem 0.45rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all .15s;
+    margin-left: 0.25rem;
+  }
+  .delete-btn:hover { background: var(--red); color: #fff; border-color: var(--red); }
+
+  /* ---- Edit book modal ---- */
+  #edit-modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.6);
+    z-index: 100;
+  }
+  #edit-modal-box {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    z-index: 101;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: min(480px, 95vw);
+  }
+  #edit-modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+  #edit-modal-header button {
+    background: none; border: none; color: var(--muted);
+    font-size: 1.1rem; cursor: pointer; line-height: 1;
+  }
+  #edit-modal-body { padding: 1.25rem; }
+  .edit-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.85rem; }
+  .edit-field label { font-size: 0.8rem; color: var(--muted); }
+  .edit-field input, .edit-field select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 0.45rem 0.75rem;
+    font-size: 0.9rem;
+    outline: none;
+  }
+  .edit-field input:focus, .edit-field select:focus { border-color: var(--accent); }
+  #edit-modal-footer {
+    display: flex; justify-content: flex-end; gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+  #edit-cancel-btn {
+    background: none; border: 1px solid var(--border);
+    color: var(--muted); border-radius: 6px;
+    padding: 0.45rem 1rem; font-size: 0.85rem; cursor: pointer;
+  }
+  #edit-save-btn {
+    background: var(--accent); color: #fff;
+    border: none; border-radius: 6px;
+    padding: 0.45rem 1rem; font-size: 0.85rem; cursor: pointer;
+  }
+  #edit-save-btn:disabled { opacity: 0.6; cursor: default; }
+
   /* ---- Add books modal ---- */
   #add-modal-backdrop {
     position: fixed; inset: 0;
@@ -676,6 +763,7 @@ TEMPLATE = """<!DOCTYPE html>
           <th>Title</th>
           <th>Year</th>
           <th>Status</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>{{ table_html | safe }}</tbody>
@@ -696,6 +784,47 @@ TEMPLATE = """<!DOCTYPE html>
     <div id="add-modal-footer">
       <span id="add-modal-count">0 selected</span>
       <button id="add-modal-submit" onclick="submitNewBooks()">Add to Reading Journey</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT BOOK MODAL -->
+<div id="edit-modal" style="display:none">
+  <div id="edit-modal-backdrop" onclick="closeEditModal()"></div>
+  <div id="edit-modal-box">
+    <div id="edit-modal-header">
+      <span>Edit Book</span>
+      <button onclick="closeEditModal()">&#x2715;</button>
+    </div>
+    <div id="edit-modal-body">
+      <input type="hidden" id="edit-orig-title">
+      <input type="hidden" id="edit-orig-author">
+      <div class="edit-field"><label>Title</label><input type="text" id="edit-title"></div>
+      <div class="edit-field"><label>Author</label><input type="text" id="edit-author"></div>
+      <div class="edit-field"><label>Series</label><input type="text" id="edit-series"></div>
+      <div class="edit-field"><label>Year</label><input type="number" id="edit-year"></div>
+      <div class="edit-field"><label>Rob</label>
+        <select id="edit-rob">
+          <option value="">—</option>
+          <option value="Read">Read</option>
+          <option value="Reading">Reading</option>
+          <option value="Hold">On Hold</option>
+          <option value="n/a">n/a</option>
+        </select>
+      </div>
+      <div class="edit-field"><label>Mom</label>
+        <select id="edit-mom">
+          <option value="">—</option>
+          <option value="Read">Read</option>
+          <option value="Reading">Reading</option>
+          <option value="Hold">On Hold</option>
+          <option value="n/a">n/a</option>
+        </select>
+      </div>
+    </div>
+    <div id="edit-modal-footer">
+      <button id="edit-cancel-btn" onclick="closeEditModal()">Cancel</button>
+      <button id="edit-save-btn" onclick="submitEdit()">Save</button>
     </div>
   </div>
 </div>
@@ -990,6 +1119,116 @@ TEMPLATE = """<!DOCTYPE html>
     document.getElementById('add-modal').style.display = 'none';
   }
 
+  function openEditModal(btn) {
+    document.getElementById('edit-orig-title').value  = btn.dataset.title;
+    document.getElementById('edit-orig-author').value = btn.dataset.author;
+    document.getElementById('edit-title').value  = btn.dataset.title;
+    document.getElementById('edit-author').value = btn.dataset.author;
+    document.getElementById('edit-series').value = btn.dataset.series;
+    document.getElementById('edit-year').value   = btn.dataset.year;
+    document.getElementById('edit-rob').value    = btn.dataset.rob;
+    document.getElementById('edit-mom').value    = btn.dataset.mom;
+    document.getElementById('edit-modal').style.display = '';
+  }
+
+  function closeEditModal() {
+    document.getElementById('edit-modal').style.display = 'none';
+    const s = document.getElementById('edit-save-btn');
+    s.disabled = false; s.textContent = 'Save';
+  }
+
+  async function deleteBook(btn) {
+    const title  = btn.dataset.title;
+    const author = btn.dataset.author;
+    if (!confirm(`Delete "${title}" by ${author}?`)) return;
+    btn.disabled = true;
+
+    const expandedAuthors = new Set();
+    document.querySelectorAll('.author-row:not(.collapsed)').forEach(r => expandedAuthors.add(r.dataset.aid));
+    const expandedSeries = new Set();
+    document.querySelectorAll('.series-row:not(.collapsed)').forEach(r => expandedSeries.add(r.dataset.sid));
+    const toggleText = document.getElementById('toggleAllBtn').textContent;
+
+    try {
+      const res = await fetch('/delete_book', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title, author})
+      });
+      const data = await res.json();
+      if (!data.ok) { alert(data.error || 'Delete failed'); btn.disabled = false; return; }
+      document.getElementById('next-reads-grid').innerHTML = data.cards_html;
+      const rg = document.getElementById('reading-grid');
+      const rs = document.getElementById('reading-section');
+      if (rg) { rg.innerHTML = data.reading_html; rs.style.display = data.reading_html.trim() ? '' : 'none'; }
+      document.querySelector('#book-table tbody').innerHTML = data.table_html;
+      document.getElementById('toggleAllBtn').textContent = toggleText;
+      document.querySelectorAll('.author-row').forEach(r => {
+        if (!expandedAuthors.has(r.dataset.aid)) r.classList.add('collapsed');
+      });
+      document.querySelectorAll('.series-row').forEach(r => {
+        if (!expandedSeries.has(r.dataset.sid)) r.classList.add('collapsed');
+      });
+      applyCollapseState();
+      filterTable();
+    } catch(e) {
+      alert('Network error');
+      btn.disabled = false;
+    }
+  }
+
+  async function submitEdit() {
+    const saveBtn = document.getElementById('edit-save-btn');
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+
+    const expandedAuthors = new Set();
+    document.querySelectorAll('.author-row:not(.collapsed)').forEach(r => expandedAuthors.add(r.dataset.aid));
+    const expandedSeries = new Set();
+    document.querySelectorAll('.series-row:not(.collapsed)').forEach(r => expandedSeries.add(r.dataset.sid));
+    const toggleText = document.getElementById('toggleAllBtn').textContent;
+
+    try {
+      const res = await fetch('/edit_book', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          orig_title:  document.getElementById('edit-orig-title').value,
+          orig_author: document.getElementById('edit-orig-author').value,
+          title:  document.getElementById('edit-title').value.trim(),
+          author: document.getElementById('edit-author').value.trim(),
+          series: document.getElementById('edit-series').value.trim(),
+          year:   document.getElementById('edit-year').value.trim(),
+          rob:    document.getElementById('edit-rob').value,
+          mom:    document.getElementById('edit-mom').value,
+        })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        alert(data.error || 'Save failed');
+        saveBtn.disabled = false; saveBtn.textContent = 'Save';
+        return;
+      }
+      closeEditModal();
+      document.getElementById('next-reads-grid').innerHTML = data.cards_html;
+      const rg = document.getElementById('reading-grid');
+      const rs = document.getElementById('reading-section');
+      if (rg) { rg.innerHTML = data.reading_html; rs.style.display = data.reading_html.trim() ? '' : 'none'; }
+      document.querySelector('#book-table tbody').innerHTML = data.table_html;
+      document.getElementById('toggleAllBtn').textContent = toggleText;
+      document.querySelectorAll('.author-row').forEach(r => {
+        if (!expandedAuthors.has(r.dataset.aid)) r.classList.add('collapsed');
+      });
+      document.querySelectorAll('.series-row').forEach(r => {
+        if (!expandedSeries.has(r.dataset.sid)) r.classList.add('collapsed');
+      });
+      applyCollapseState();
+      filterTable();
+    } catch(e) {
+      alert('Network error');
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  }
+
   function submitNewBooks() {
     const selected = _modalBooks.filter(b => b.checked);
     if (!selected.length) return;
@@ -1061,6 +1300,74 @@ def last_name(author: str) -> str:
 def sort_key(b: dict):
     year = int(b["Year"]) if b["Year"].isdigit() else 0
     return (last_name(b["Author"]), b["Author"].lower(), b["Series"].lower(), year)
+
+
+@app.route("/delete_book", methods=["POST"])
+def delete_book():
+    data = request.get_json() or {}
+    title  = data.get("title",  "").strip()
+    author = data.get("author", "").strip()
+    if not title:
+        return {"ok": False, "error": "invalid input"}, 400
+    try:
+        conn = _db_conn()
+        conn.execute("DELETE FROM BOOKS WHERE TITLE=? AND AUTHOR=?", (title, author))
+        conn.commit()
+        conn.close()
+        _cache["books"] = None
+        books = load_books()
+        sorted_books = sorted(books, key=sort_key)
+        return {
+            "ok": True,
+            "cards_html":   render_template_string(CARDS_PARTIAL,   next_books=next_to_read(sorted_books)),
+            "reading_html": render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books)),
+            "table_html":   render_template_string(TABLE_PARTIAL,   grouped_books=build_grouped_books(sorted_books), badge=badge),
+        }
+    except Exception as e:
+        app.logger.error(f"delete_book failed: {e}")
+        return {"ok": False, "error": str(e)}, 500
+
+
+@app.route("/edit_book", methods=["POST"])
+def edit_book():
+    data = request.get_json() or {}
+    orig_title  = data.get("orig_title",  "").strip()
+    orig_author = data.get("orig_author", "").strip()
+    title  = data.get("title",  "").strip()
+    author = data.get("author", "").strip()
+    series = data.get("series", "").strip()
+    year   = data.get("year",   "").strip()
+    rob    = data.get("rob",    "").strip()
+    mom    = data.get("mom",    "").strip()
+
+    if not orig_title or not title or not author:
+        return {"ok": False, "error": "invalid input"}, 400
+
+    try:
+        year_val = int(year) if year else None
+    except ValueError:
+        year_val = None
+
+    try:
+        conn = _db_conn()
+        conn.execute(
+            "UPDATE BOOKS SET TITLE=?, AUTHOR=?, SERIES=?, YEAR=?, ROB=?, MOM=? WHERE TITLE=? AND AUTHOR=?",
+            (title, author, series, year_val, rob, mom, orig_title, orig_author),
+        )
+        conn.commit()
+        conn.close()
+        _cache["books"] = None
+        books = load_books()
+        sorted_books = sorted(books, key=sort_key)
+        return {
+            "ok": True,
+            "cards_html":   render_template_string(CARDS_PARTIAL,   next_books=next_to_read(sorted_books)),
+            "reading_html": render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books)),
+            "table_html":   render_template_string(TABLE_PARTIAL,   grouped_books=build_grouped_books(sorted_books), badge=badge),
+        }
+    except Exception as e:
+        app.logger.error(f"edit_book failed: {e}")
+        return {"ok": False, "error": str(e)}, 500
 
 
 @app.route("/update_status", methods=["POST"])
