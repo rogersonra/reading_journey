@@ -232,6 +232,34 @@ def advance_after_status_change(sorted_books: list[dict], changed_title: str, ch
             if (s["title"], s["author"]) in available]
 
 
+def skip_book(sorted_books: list[dict], skip_title: str, skip_author: str) -> list[dict]:
+    """Remove a book from Next Reads and slot in the next from rotation, skipping that author."""
+    state = load_state()
+    saved = state.get("next_reads", [])
+    available = _available_books(sorted_books)
+
+    remaining = [s for s in saved
+                 if not (s["title"] == skip_title and s["author"] == skip_author)]
+
+    if len(remaining) < len(saved):
+        already = {s["author"].lower() for s in remaining}
+        already.add(skip_author.lower())
+        ordered = _unread_by_author(sorted_books, exclude_authors=already)
+        if not ordered:
+            already.discard(skip_author.lower())
+            ordered = _unread_by_author(sorted_books, exclude_authors=already)
+        entry = _next_from_rotation(ordered, state.get("last_author", ""))
+        if entry:
+            akey, next_book = entry
+            remaining.append({"title": next_book["Title"], "author": next_book["Author"]})
+            state["last_author"] = akey
+
+    state["next_reads"] = remaining
+    save_state(state)
+    return [available[(s["title"], s["author"])] for s in remaining
+            if (s["title"], s["author"]) in available]
+
+
 TABLE_PARTIAL = """
 {% for group in grouped_books %}
 {% set aid = loop.index %}
@@ -303,7 +331,10 @@ CARDS_PARTIAL = """
     <button class="status-btn s-hold{% if b.Rob == 'Hold' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">On Hold</button>
     <button class="status-btn s-na{% if b.Rob == 'n/a' %} btn-active{% endif %}"          data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
   </div>
-  <button class="libby-btn" data-title="{{ b.Title }}" data-author="{{ b.Author }}" onclick="borrowOnLibby(this)">Borrow on Libby</button>
+  <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
+    <button class="libby-btn" data-title="{{ b.Title }}" data-author="{{ b.Author }}" onclick="borrowOnLibby(this)">Borrow on Libby</button>
+    <button class="skip-btn" data-title="{{ b.Title }}" data-author="{{ b.Author }}" onclick="skipBook(this)">Skip</button>
+  </div>
 </div>
 {% endfor %}
 """
@@ -423,8 +454,8 @@ TEMPLATE = """<!DOCTYPE html>
   }
   .hold-card:hover { border-color: var(--orange); }
 
-  .libby-btn {
-    margin-top: 0.5rem;
+  .libby-btn, .skip-btn {
+    margin-top: 0;
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--muted);
@@ -436,6 +467,7 @@ TEMPLATE = """<!DOCTYPE html>
     width: 100%;
   }
   .libby-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .skip-btn:hover { background: var(--amber); color: #fff; border-color: var(--amber); }
 
   /* ---- Controls ---- */
   .controls {
@@ -766,6 +798,25 @@ TEMPLATE = """<!DOCTYPE html>
         btn.disabled = false;
       }
     }).catch(() => { btn.textContent = 'Error'; btn.disabled = false; });
+  }
+
+  function skipBook(btn) {
+    const title  = btn.dataset.title;
+    const author = btn.dataset.author;
+    btn.textContent = '…';
+    btn.disabled = true;
+    fetch('/skip_book', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({title, author})
+    }).then(r => r.json()).then(data => {
+      if (data.ok) {
+        document.getElementById('next-reads-grid').innerHTML = data.cards_html;
+      } else {
+        btn.textContent = 'Skip';
+        btn.disabled = false;
+      }
+    }).catch(() => { btn.textContent = 'Skip'; btn.disabled = false; });
   }
 
   function borrowOnLibby(btn) {
@@ -1113,6 +1164,23 @@ def last_name(author: str) -> str:
 def sort_key(b: dict):
     year = int(b["Year"]) if b["Year"].isdigit() else 0
     return (last_name(b["Author"]), b["Author"].lower(), b["Series"].lower(), year)
+
+
+@app.route("/skip_book", methods=["POST"])
+def skip_book_route():
+    data = request.get_json() or {}
+    title  = data.get("title",  "").strip()
+    author = data.get("author", "").strip()
+    if not title:
+        return {"ok": False, "error": "invalid input"}, 400
+    try:
+        books = load_books()
+        sorted_books = sorted(books, key=sort_key)
+        next_books = skip_book(sorted_books, title, author)
+        return {"ok": True, "cards_html": render_template_string(CARDS_PARTIAL, next_books=next_books)}
+    except Exception as e:
+        app.logger.error(f"skip_book failed: {e}")
+        return {"ok": False, "error": str(e)}, 500
 
 
 @app.route("/update_status", methods=["POST"])
