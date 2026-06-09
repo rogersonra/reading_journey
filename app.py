@@ -629,7 +629,7 @@ TEMPLATE = """<!DOCTYPE html>
     color: var(--muted);
     border-radius: 4px;
     padding: 0.15rem 0.45rem;
-    font-size: 0.75rem;
+    font-size: 1rem;
     cursor: pointer;
     transition: all .15s;
   }
