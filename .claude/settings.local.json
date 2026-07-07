@@ -12,7 +12,10 @@
       "Read(//c/Users/User/.claude/projects/**)",
       "Bash(python3 -c ' *)",
       "Bash(python -c ' *)",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('app.py', encoding='utf-8'\\).read\\(\\)\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app.py', encoding='utf-8'\\).read\\(\\)\\)\")",
+      "Bash(curl -s \"http://localhost:5000/fetch_books?query=Harry%20Bosch\" --max-time 25)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

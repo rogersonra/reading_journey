@@ -751,7 +751,45 @@ TEMPLATE = """<!DOCTYPE html>
     font-size: 0.85rem; border-bottom: 1px solid var(--border);
   }
   .modal-book-row:last-child { border-bottom: none; }
+  .modal-book-title { cursor: pointer; }
+  .modal-book-title:hover { color: var(--accent); text-decoration: underline; }
   .modal-book-year { color: var(--muted); margin-left: auto; white-space: nowrap; }
+
+  /* ---- Book detail modal ---- */
+  #detail-modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.6);
+    z-index: 200;
+  }
+  #detail-modal-box {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    z-index: 201;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: min(520px, 95vw);
+    max-height: 80vh;
+    display: flex; flex-direction: column;
+  }
+  #detail-modal-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+  }
+  #detail-modal-header .title { font-weight: 600; }
+  #detail-modal-header .author { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+  #detail-modal-header button {
+    background: none; border: none; color: var(--muted);
+    font-size: 1.1rem; cursor: pointer; line-height: 1;
+    flex-shrink: 0;
+  }
+  #detail-modal-body {
+    overflow-y: auto; padding: 1rem 1.25rem;
+    font-size: 0.9rem; line-height: 1.5; color: var(--text);
+    white-space: pre-wrap;
+  }
 </style>
 </head>
 <body>
@@ -864,6 +902,21 @@ TEMPLATE = """<!DOCTYPE html>
       <span id="add-modal-count">0 selected</span>
       <button id="add-modal-submit" onclick="submitNewBooks()">Add to Reading Journey</button>
     </div>
+  </div>
+</div>
+
+<!-- BOOK DETAIL MODAL -->
+<div id="detail-modal" style="display:none">
+  <div id="detail-modal-backdrop" onclick="closeDetailModal()"></div>
+  <div id="detail-modal-box">
+    <div id="detail-modal-header">
+      <div>
+        <div class="title" id="detail-modal-title"></div>
+        <div class="author" id="detail-modal-author"></div>
+      </div>
+      <button onclick="closeDetailModal()">&#x2715;</button>
+    </div>
+    <div id="detail-modal-body"></div>
   </div>
 </div>
 
@@ -1126,7 +1179,7 @@ TEMPLATE = """<!DOCTYPE html>
             const idx = _modalBooks.length - 1;
             html += `<div class="modal-book-row">
               <input type="checkbox" data-idx="${idx}" onchange="toggleBook(this)">
-              <span>${esc(b.title)}</span>
+              <span class="modal-book-title" onclick="showBookDetail(${idx})">${esc(b.title)}</span>
               <span class="modal-book-year">${esc(b.year)}</span>
             </div>`;
           }
@@ -1147,7 +1200,7 @@ TEMPLATE = """<!DOCTYPE html>
             const idx = _modalBooks.length - 1;
             html += `<div class="modal-book-row">
               <input type="checkbox" data-idx="${idx}" onchange="toggleBook(this)">
-              <span>${esc(b.title)}</span>
+              <span class="modal-book-title" onclick="showBookDetail(${idx})">${esc(b.title)}</span>
               <span class="modal-book-year">${esc(b.year)}</span>
             </div>`;
           }
@@ -1172,6 +1225,18 @@ TEMPLATE = """<!DOCTYPE html>
   function toggleBook(cb) {
     _modalBooks[+cb.dataset.idx].checked = cb.checked;
     updateModalCount();
+  }
+
+  function showBookDetail(idx) {
+    const b = _modalBooks[idx];
+    document.getElementById('detail-modal-title').textContent = b.title;
+    document.getElementById('detail-modal-author').textContent = b.author || '';
+    document.getElementById('detail-modal-body').textContent = b.description || 'No description available.';
+    document.getElementById('detail-modal').style.display = '';
+  }
+
+  function closeDetailModal() {
+    document.getElementById('detail-modal').style.display = 'none';
   }
 
   function toggleSeriesModal(cb, series) {
@@ -1483,6 +1548,7 @@ def fetch_books_route():
       ) {
         title
         release_year
+        description
         book_series(limit: 1) {
           position
           series { name }
@@ -1557,12 +1623,13 @@ def fetch_books_route():
             return False
         return True
 
-    def add_book(title, year, author_name, bs_list, editions=None):
+    def add_book(title, year, author_name, bs_list, editions=None, description=None):
         title = (title or "").strip()
         if not title or title.lower() in existing:
             return
         if not is_english(title, editions):
             return
+        description = (description or "").strip()
         if bs_list and bs_list[0].get("series"):
             series_name = bs_list[0]["series"]["name"]
             position    = bs_list[0].get("position") or 0
@@ -1571,12 +1638,16 @@ def fetch_books_route():
                 series_slots[key] = {
                     "title": title, "year": year, "series": series_name,
                     "position": position, "author": author_name,
+                    "description": description,
                 }
         else:
             norm = title.lower().split(":")[0].strip()
             if norm not in standalone_seen:
                 standalone_seen.add(norm)
-                standalone.append({"title": title, "year": year, "series": "", "author": author_name})
+                standalone.append({
+                    "title": title, "year": year, "series": "", "author": author_name,
+                    "description": description,
+                })
 
     books_data = (data.get("data") or {}).get("books") or []
     for book in books_data:
@@ -1589,7 +1660,10 @@ def fetch_books_route():
                 break
         if not author_name and contribs:
             author_name = (contribs[0].get("author") or {}).get("name", "")
-        add_book(book.get("title"), year, author_name or search_query, book.get("book_series") or [], book.get("editions"))
+        add_book(
+            book.get("title"), year, author_name or search_query,
+            book.get("book_series") or [], book.get("editions"), book.get("description"),
+        )
 
     series_map: dict = {}
     for (series_name, _), book in series_slots.items():
