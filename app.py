@@ -1,6 +1,7 @@
 from __future__ import annotations
 import csv
 import json
+import re
 import time
 from itertools import groupby
 from pathlib import Path
@@ -279,6 +280,7 @@ TABLE_PARTIAL = """
     <i class="chevron">&#9660;</i>
     {{ sg.series }}
     <span class="book-count">{{ sg.books|length }}</span>
+    <button class="find-btn" onclick="event.stopPropagation();findNewBooks('{{ sg.series }}')">+ Find new books</button>
   </td>
 </tr>
 {% for b in sg.books %}
@@ -629,7 +631,7 @@ TEMPLATE = """<!DOCTYPE html>
     color: var(--muted);
     border-radius: 4px;
     padding: 0.15rem 0.45rem;
-    font-size: 1rem;
+    font-size: 1.5rem;
     cursor: pointer;
     transition: all .15s;
   }
@@ -758,9 +760,9 @@ TEMPLATE = """<!DOCTYPE html>
   <h1>Reading Journey</h1>
   <span>{{ total }} books</span>
   <div id="author-search-wrap">
-    <input id="author-search-input" type="text" placeholder="Search for an author…"
-           onkeydown="if(event.key==='Enter')searchAuthor()">
-    <button id="author-search-btn" onclick="searchAuthor()">Find new books</button>
+    <input id="author-search-input" type="text" placeholder="Search for an author or series…"
+           onkeydown="if(event.key==='Enter')searchBooks()">
+    <button id="author-search-btn" onclick="searchBooks()">Find new books</button>
   </div>
 </header>
 
@@ -1069,31 +1071,32 @@ TEMPLATE = """<!DOCTYPE html>
   collapseAll();
   filterTable();
 
-  // ---- Header author search ----
-  function searchAuthor() {
+  // ---- Header author/series search ----
+  function searchBooks() {
     const val = document.getElementById('author-search-input').value.trim();
     if (val) findNewBooks(val);
   }
 
   // ---- Find & add new books ----
-  let _modalAuthor = '';
+  let _modalQuery = '';
   let _modalBooks  = [];
 
   function esc(s) {
     return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  function findNewBooks(author) {
-    _modalAuthor = author;
+  function findNewBooks(query) {
+    _modalQuery = query;
     _modalBooks  = [];
-    document.getElementById('add-modal-title').textContent = 'New books — ' + author;
+    document.getElementById('add-modal-title').textContent = 'New books — ' + query;
     document.getElementById('add-modal-body').innerHTML = '<p style="color:var(--muted)">Loading…</p>';
     document.getElementById('add-modal-submit').textContent = 'Add to Reading Journey';
     document.getElementById('add-modal-submit').disabled = false;
+    document.getElementById('add-modal-submit').onclick = submitNewBooks;
     updateModalCount();
     document.getElementById('add-modal').style.display = '';
 
-    fetch('/fetch_author_books?author=' + encodeURIComponent(author))
+    fetch('/fetch_books?query=' + encodeURIComponent(query))
       .then(r => r.json())
       .then(data => {
         if (!data.ok) {
@@ -1115,7 +1118,7 @@ TEMPLATE = """<!DOCTYPE html>
               <span>${esc(sg.series)}</span>
               <span style="color:var(--muted);font-weight:400;font-size:0.78rem;margin-left:auto">${sg.books.length} book${sg.books.length !== 1 ? 's' : ''}</span>
               <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer;font-weight:400;font-size:0.78rem;color:var(--muted);margin-left:0.75rem">
-                <input type="checkbox" onchange="toggleSeries(this,'${seriesEsc}')"> Select all
+                <input type="checkbox" onchange="toggleSeriesModal(this,'${seriesEsc}')"> Select all
               </label>
             </div>`;
           for (const b of sg.books) {
@@ -1154,6 +1157,12 @@ TEMPLATE = """<!DOCTYPE html>
         if (!html) html = '<p style="color:var(--muted)">No new books found.</p>';
         document.getElementById('add-modal-body').innerHTML = html;
         updateModalCount();
+
+        if (totalBooks === 0) {
+          const submitBtn = document.getElementById('add-modal-submit');
+          submitBtn.textContent = 'Close Window';
+          submitBtn.onclick = closeModal;
+        }
       })
       .catch(() => {
         document.getElementById('add-modal-body').innerHTML = '<p style="color:var(--red)">Network error.</p>';
@@ -1165,7 +1174,7 @@ TEMPLATE = """<!DOCTYPE html>
     updateModalCount();
   }
 
-  function toggleSeries(cb, series) {
+  function toggleSeriesModal(cb, series) {
     document.querySelectorAll('#add-modal-body input[data-idx]').forEach(el => {
       if (_modalBooks[+el.dataset.idx].series === series) {
         _modalBooks[+el.dataset.idx].checked = cb.checked;
@@ -1215,7 +1224,7 @@ TEMPLATE = """<!DOCTYPE html>
     fetch('/add_books', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({author: _modalAuthor, books: selected})
+      body: JSON.stringify({query: _modalQuery, books: selected})
     }).then(r => r.json()).then(data => {
       if (data.ok) {
         document.querySelector('#book-table tbody').innerHTML = data.table_html;
@@ -1452,28 +1461,38 @@ def update_status():
         return {"ok": False, "error": str(e)}, 500
 
 
-@app.route("/fetch_author_books")
-def fetch_author_books():
+@app.route("/fetch_books")
+def fetch_books_route():
     import urllib.request
     import urllib.error
     import json as _json
 
-    author = request.args.get("author", "").strip()
-    if not author:
-        return {"ok": False, "error": "missing author"}, 400
+    search_query = request.args.get("query", "").strip()
+    if not search_query:
+        return {"ok": False, "error": "missing query"}, 400
 
     query = """
-    query AuthorBooks($author: String!) {
-      authors(where: { name: { _eq: $author } }) {
-        contributions(limit: 100) {
-          book {
-            title
-            release_year
-            book_series(limit: 1) {
-              position
-              series { name }
-            }
-          }
+    query SearchBooks($q: String!) {
+      books(
+        where: { _or: [
+          { contributions: { author: { name: { _eq: $q } } } },
+          { book_series: { series: { name: { _eq: $q } } } }
+        ] },
+        order_by: { users_count: desc },
+        limit: 200
+      ) {
+        title
+        release_year
+        book_series(limit: 1) {
+          position
+          series { name }
+        }
+        editions(limit: 10) {
+          language { code2 }
+        }
+        contributions(limit: 5) {
+          contribution
+          author { name }
         }
       }
     }
@@ -1482,7 +1501,7 @@ def fetch_author_books():
     try:
         payload = _json.dumps({
             "query": query,
-            "variables": {"author": author},
+            "variables": {"q": search_query},
         }).encode()
         req = urllib.request.Request(
             "https://api.hardcover.app/v1/graphql",
@@ -1505,35 +1524,72 @@ def fetch_author_books():
 
     existing = {b["Title"].lower() for b in load_books()}
 
-    authors_data = ((data.get("data") or {}).get("authors") or [])
-    contributions = authors_data[0].get("contributions", []) if authors_data else []
-
-    # Deduplicate series books by (series, position); standalone by normalised title
+    # Results are ordered by popularity (users_count desc), so keeping the first
+    # book seen per slot naturally prefers the well-tracked English edition over
+    # obscure translations/duplicate stubs that share the same series position.
     series_slots: dict = {}   # (series_name, position) -> book dict
     standalone_seen: set = set()
     standalone = []
 
-    for c in contributions:
-        book = c.get("book")
-        if not book:
-            continue
-        title = (book.get("title") or "").strip()
-        if not title or title.lower() in existing:
-            continue
-        year = str(book.get("release_year") or "")
-        bs_list = book.get("book_series") or []
+    def is_english(title, editions):
+        codes = {
+            (e.get("language") or {}).get("code2")
+            for e in (editions or [])
+            if e.get("language")
+        }
+        codes.discard(None)
+        if codes:
+            return "en" in codes
+        # No edition data to go on — fall back to a lightweight text check.
+        if any(ord(ch) > 0x2FF for ch in title):
+            return False  # non-Latin script
+        if any(0xC0 <= ord(ch) <= 0x17F for ch in title):
+            return False  # accented Latin letters, common in FR/ES/IT/DE/NL/SV titles
+        foreign_words = {
+            "der", "das", "und", "für", "mit", "nicht", "ein", "eine", "im", "von",
+            "het", "een", "van", "niet", "de",
+            "los", "las", "del", "una", "uno", "que", "la",
+            "gli", "che", "di", "il", "nel",
+            "les", "des", "du", "et",
+        }
+        words = set(re.findall(r"[a-z]+", title.lower()))
+        if words & foreign_words:
+            return False
+        return True
 
+    def add_book(title, year, author_name, bs_list, editions=None):
+        title = (title or "").strip()
+        if not title or title.lower() in existing:
+            return
+        if not is_english(title, editions):
+            return
         if bs_list and bs_list[0].get("series"):
             series_name = bs_list[0]["series"]["name"]
             position    = bs_list[0].get("position") or 0
             key = (series_name, position)
             if key not in series_slots:
-                series_slots[key] = {"title": title, "year": year, "series": series_name, "position": position}
+                series_slots[key] = {
+                    "title": title, "year": year, "series": series_name,
+                    "position": position, "author": author_name,
+                }
         else:
             norm = title.lower().split(":")[0].strip()
             if norm not in standalone_seen:
                 standalone_seen.add(norm)
-                standalone.append({"title": title, "year": year, "series": ""})
+                standalone.append({"title": title, "year": year, "series": "", "author": author_name})
+
+    books_data = (data.get("data") or {}).get("books") or []
+    for book in books_data:
+        year = str(book.get("release_year") or "")
+        contribs = book.get("contributions") or []
+        author_name = ""
+        for c in contribs:
+            if not c.get("contribution"):
+                author_name = (c.get("author") or {}).get("name", "")
+                break
+        if not author_name and contribs:
+            author_name = (contribs[0].get("author") or {}).get("name", "")
+        add_book(book.get("title"), year, author_name or search_query, book.get("book_series") or [], book.get("editions"))
 
     series_map: dict = {}
     for (series_name, _), book in series_slots.items():
@@ -1551,10 +1607,10 @@ def add_books_route():
     import gspread
     from google.oauth2.service_account import Credentials
 
-    data = request.get_json() or {}
-    author = data.get("author", "").strip()
-    books  = data.get("books", [])
-    if not author or not books:
+    data  = request.get_json() or {}
+    query = data.get("query", "").strip()
+    books = data.get("books", [])
+    if not books:
         return {"ok": False, "error": "invalid input"}, 400
     try:
         creds = Credentials.from_service_account_file(
@@ -1565,7 +1621,7 @@ def add_books_route():
         ws = client.open_by_key(SHEET_ID).sheet1
         for b in books:
             ws.append_row(
-                [author, b.get("series", ""), b.get("title", ""), b.get("year", ""), "", ""],
+                [b.get("author", "") or query, b.get("series", ""), b.get("title", ""), b.get("year", ""), "", ""],
                 value_input_option="RAW",
             )
         _cache["books"] = None

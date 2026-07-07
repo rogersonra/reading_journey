@@ -10,4 +10,6 @@ state.json
 config.py
 HARDCOVER_TOKEN.py
 server.log
+app_run.log
+app_run_err.log
 screenshots/

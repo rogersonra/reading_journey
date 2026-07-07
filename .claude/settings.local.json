@@ -4,7 +4,15 @@
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\User\\\\Documents\\\\git\\\\projects\\\\reading_journey\" -Recurse -Force)",
       "Bash(Select-Object FullName)",
       "Bash(Format-List)",
-      "PowerShell(& \"C:\\\\Users\\\\User\\\\Documents\\\\git\\\\projects\\\\reading_journey\\\\venv\\\\Scripts\\\\python.exe\" \"C:\\\\Users\\\\User\\\\Documents\\\\git\\\\projects\\\\reading_journey\\\\app.py\")"
+      "PowerShell(& \"C:\\\\Users\\\\User\\\\Documents\\\\git\\\\projects\\\\reading_journey\\\\venv\\\\Scripts\\\\python.exe\" \"C:\\\\Users\\\\User\\\\Documents\\\\git\\\\projects\\\\reading_journey\\\\app.py\")",
+      "Bash(Start-Sleep -Seconds 3)",
+      "Bash(curl -s http://localhost:5000)",
+      "Bash(Select-String -Pattern \"<title>\")",
+      "Bash(Select-Object -First 1)",
+      "Read(//c/Users/User/.claude/projects/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app.py', encoding='utf-8'\\).read\\(\\)\\)\")"
     ]
   }
 }
