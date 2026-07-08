@@ -313,7 +313,7 @@ READING_PARTIAL = """
   <div class="author">{{ b.Author or '—' }}</div>
   <div class="series">{{ b.Series }}</div>
   <div class="year">{{ b.Year }}</div>
-  <div class="status-slot">{{ badge(b.Status) | safe }}</div>
+  <div class="status-slot">{% if b.Status == 'Reading' %}<span class="badge badge-shelf-reading">Currently Reading</span>{% else %}{{ badge(b.Status) | safe }}{% endif %}</div>
   <div class="status-btns">
     {% if b.Status == 'Hold' %}
     <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Borrowed</button>
@@ -545,6 +545,12 @@ TEMPLATE = """<!DOCTYPE html>
   .badge-borrowed { background: rgba(245,166,35,.18); color: var(--amber); }
   .badge-na      { background: rgba(122,127,153,.12); color: var(--muted); }
   .badge-unread  { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .badge-shelf-reading {
+    background: linear-gradient(135deg, var(--accent), #9b6cff);
+    color: #fff;
+    font-weight: 700;
+    box-shadow: 0 0 10px rgba(108,142,255,.5);
+  }
 
   .count-note { color: var(--muted); font-size: 0.82rem; margin-top: 0.5rem; }
 
