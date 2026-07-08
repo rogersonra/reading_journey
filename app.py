@@ -15,7 +15,7 @@ from config import SHEET_ID, HARDCOVER_TOKEN
 STATE_PATH = BASE_DIR / "state.json"
 CACHE_TTL = 300  # seconds before re-fetching from Sheets
 NEXT_COUNT = 5
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 UNREAD = {"", None}
 _cache: dict = {"books": None, "ts": 0.0}
@@ -1735,4 +1735,4 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, exclude_patterns=["test_*.py"])
+    app.run(host="0.0.0.0", debug=True, exclude_patterns=["test_*.py"])
