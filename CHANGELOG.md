@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.0] - 2026-07-08
+
+### Added
+- App now listens on the local network (bound to `0.0.0.0` instead of `localhost`-only), so it can be reached from other devices on the same Wi-Fi, e.g. an iPad, via `http://<PC-LAN-IP>:5000`
+
 ## [1.0.0] - 2026-07-08
 
 First versioned release, marking the app's baseline feature set after its initial development.
