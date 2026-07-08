@@ -309,14 +309,14 @@ READING_PARTIAL = """
 <div class="book-card{% if b.Rob == 'Hold' %} hold-card{% endif %}">
   <div class="title">{{ b.Title }}</div>
   <div class="author">{{ b.Author or '—' }}</div>
-  {% if b.Series %}<div class="series">{{ b.Series }}</div>{% endif %}
+  <div class="series">{{ b.Series }}</div>
   <div class="year">{{ b.Year }}</div>
-  {% if b.Rob == 'Hold' %}<div style="margin-top:0.4rem"><span class="badge badge-hold">On Hold</span></div>{% endif %}
+  <div class="status-slot">{% if b.Rob != 'Reading' %}{{ badge(b.Rob) | safe }}{% endif %}</div>
   <div class="status-btns">
     {% if b.Rob == 'Hold' %}
-    <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
+    <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Borrowed</button>
     {% else %}
-    <button class="status-btn s-read" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read" onclick="setStatus(this)">Read</button>
+    <button class="status-btn s-read" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read" onclick="setStatus(this)">Reading</button>
     {% endif %}
   </div>
 </div>
@@ -332,7 +332,7 @@ CARDS_PARTIAL = """
   <div class="year">{{ b.Year }}</div>
   <div class="status-btns">
     <button class="status-btn s-read{% if b.Rob == 'Read' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read"    onclick="setStatus(this)">Read</button>
-    <button class="status-btn s-reading{% if b.Rob == 'Reading' %} btn-active{% endif %}" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
+    <button class="status-btn s-reading{% if b.Rob == 'Reading' %} btn-active{% endif %}" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Borrowed</button>
     <button class="status-btn s-hold{% if b.Rob == 'Hold' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">On Hold</button>
     <button class="status-btn s-na{% if b.Rob == 'n/a' %} btn-active{% endif %}"          data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
   </div>
@@ -432,6 +432,7 @@ TEMPLATE = """<!DOCTYPE html>
   .book-card .author { font-size: 0.8rem; color: var(--muted); }
   .book-card .series { font-size: 0.78rem; color: var(--accent); margin-top: 0.2rem; }
   .book-card .year { font-size: 0.75rem; color: var(--muted); margin-top: auto; padding-top: 0.5rem; }
+  .book-card .status-slot { margin-top: 0.4rem; min-height: 1.35rem; }
   .status-btns { display: flex; gap: 0.3rem; margin-top: 0.5rem; }
   .status-btn {
     flex: 1;
@@ -812,7 +813,7 @@ TEMPLATE = """<!DOCTYPE html>
 
   <!-- READING -->
   <div id="reading-section"{% if not reading_html | trim %} style="display:none"{% endif %}>
-    <p class="section-title">Reading</p>
+    <p class="section-title">Bookshelf</p>
     <div class="next-grid" id="reading-grid">{{ reading_html | safe }}</div>
   </div>
 
@@ -1495,7 +1496,7 @@ def edit_book():
         return {
             "ok": True,
             "cards_html":   render_template_string(CARDS_PARTIAL,   next_books=next_to_read(sorted_books)),
-            "reading_html": render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books)),
+            "reading_html": render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books), badge=badge),
             "table_html":   render_template_string(TABLE_PARTIAL,   grouped_books=build_grouped_books(sorted_books), badge=badge),
         }
     except Exception as e:
@@ -1518,7 +1519,7 @@ def update_status():
         sorted_books = sorted(books, key=sort_key)
         next_books   = advance_after_status_change(sorted_books, title, author, status)
         cards_html   = render_template_string(CARDS_PARTIAL,   next_books=next_books)
-        reading_html = render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books))
+        reading_html = render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books), badge=badge)
         table_html   = render_template_string(TABLE_PARTIAL,   grouped_books=build_grouped_books(sorted_books), badge=badge)
         return {"ok": True, "cards_html": cards_html, "reading_html": reading_html, "table_html": table_html}
     except Exception as e:
@@ -1706,7 +1707,7 @@ def add_books_route():
             "ok": True,
             "table_html":   render_template_string(TABLE_PARTIAL,   grouped_books=build_grouped_books(sorted_books), badge=badge),
             "cards_html":   render_template_string(CARDS_PARTIAL,   next_books=next_books),
-            "reading_html": render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books)),
+            "reading_html": render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books), badge=badge),
         }
     except Exception as e:
         app.logger.error(f"add_books failed: {e}")
@@ -1720,7 +1721,7 @@ def index():
     grouped_books = build_grouped_books(sorted_books)
     next_books = next_to_read(sorted_books)
     cards_html   = render_template_string(CARDS_PARTIAL,   next_books=next_books)
-    reading_html = render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books))
+    reading_html = render_template_string(READING_PARTIAL, reading_books=reading_books(sorted_books), badge=badge)
     table_html   = render_template_string(TABLE_PARTIAL,   grouped_books=grouped_books, badge=badge)
     return render_template_string(
         TEMPLATE,
