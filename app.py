@@ -129,9 +129,12 @@ def update_book_status(title: str, author: str, status: str) -> None:
             return
 
 
+READING_ORDER = {"reading": 0, "borrowed": 1, "hold": 2}
+
+
 def reading_books(sorted_books: list[dict]) -> list[dict]:
-    books = [b for b in sorted_books if b["Status"].lower() in ("reading", "hold")]
-    return sorted(books, key=lambda b: 0 if b["Status"].lower() == "reading" else 1)
+    books = [b for b in sorted_books if b["Status"].lower() in READING_ORDER]
+    return sorted(books, key=lambda b: READING_ORDER[b["Status"].lower()])
 
 
 def _unread_by_author(sorted_books: list[dict], exclude_authors: set[str] | None = None) -> list[tuple[str, dict]]:
@@ -314,6 +317,8 @@ READING_PARTIAL = """
   <div class="status-btns">
     {% if b.Status == 'Hold' %}
     <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Borrowed</button>
+    {% elif b.Status.lower() == 'borrowed' %}
+    <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
     {% else %}
     <button class="status-btn s-read" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read" onclick="setStatus(this)">Read</button>
     {% endif %}
@@ -537,6 +542,7 @@ TEMPLATE = """<!DOCTYPE html>
   .badge-read    { background: rgba(76,175,125,.18); color: var(--green); }
   .badge-reading { background: rgba(245,166,35,.18); color: var(--amber); }
   .badge-hold    { background: rgba(245,146,58,.18); color: var(--orange); }
+  .badge-borrowed { background: rgba(91,192,222,.18); color: var(--blue); }
   .badge-na      { background: rgba(122,127,153,.12); color: var(--muted); }
   .badge-unread  { background: transparent; color: var(--muted); border: 1px solid var(--border); }
 
@@ -1392,7 +1398,7 @@ def build_grouped_books(sorted_books: list[dict]) -> list[dict]:
 
 def badge(status: str) -> str:
     s = (status or "").strip().lower()
-    cls_map = {"read": "badge-read", "reading": "badge-reading", "hold": "badge-hold", "n/a": "badge-na"}
+    cls_map = {"read": "badge-read", "reading": "badge-reading", "hold": "badge-hold", "borrowed": "badge-borrowed", "n/a": "badge-na"}
     cls = cls_map.get(s, "badge-unread")
     display_map = {"hold": "On Hold"}
     label = display_map.get(s, status.strip())
