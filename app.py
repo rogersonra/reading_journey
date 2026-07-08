@@ -542,7 +542,7 @@ TEMPLATE = """<!DOCTYPE html>
   .badge-read    { background: rgba(76,175,125,.18); color: var(--green); }
   .badge-reading { background: rgba(245,166,35,.18); color: var(--amber); }
   .badge-hold    { background: rgba(245,146,58,.18); color: var(--orange); }
-  .badge-borrowed { background: rgba(91,192,222,.18); color: var(--blue); }
+  .badge-borrowed { background: rgba(245,166,35,.18); color: var(--amber); }
   .badge-na      { background: rgba(122,127,153,.12); color: var(--muted); }
   .badge-unread  { background: transparent; color: var(--muted); border: 1px solid var(--border); }
 
