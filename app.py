@@ -15,6 +15,7 @@ from config import SHEET_ID, HARDCOVER_TOKEN
 STATE_PATH = BASE_DIR / "state.json"
 CACHE_TTL = 300  # seconds before re-fetching from Sheets
 NEXT_COUNT = 5
+APP_VERSION = "1.0.0"
 
 UNREAD = {"", None}
 _cache: dict = {"books": None, "ts": 0.0}
@@ -808,7 +809,7 @@ TEMPLATE = """<!DOCTYPE html>
 
 <header>
   <h1>Reading Journey</h1>
-  <span>{{ total }} books</span>
+  <span>{{ total }} books &middot; v{{ app_version }}</span>
   <div id="author-search-wrap">
     <input id="author-search-input" type="text" placeholder="Search for an author or series…"
            onkeydown="if(event.key==='Enter')searchBooks()">
@@ -1729,6 +1730,7 @@ def index():
         reading_html=reading_html,
         total=len(books),
         badge=badge,
+        app_version=APP_VERSION,
     )
 
 
