@@ -30,11 +30,11 @@ python app.py
 
 ## CSV Format
 **File:** `csv/books.csv`  
-**Columns:** `Author, Series, Title, Year, Rob, Mom`  
+**Columns:** `Author, Series, Title, Year, Status`  
 **Status values:** `Read`, `Reading`, `Hold`, `n/a`, or blank (blank = not yet read)
 
 ## Business Logic
-- **Next 10 to Read** — first 10 books in CSV order where `Rob` column is blank
+- **Next 10 to Read** — first 10 books in CSV order where `Status` column is blank
 - **All Books** — full list with color-coded status badges; filterable by status; searchable by title/author/series
 
 ## Known Data Quirks

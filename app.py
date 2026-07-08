@@ -34,8 +34,7 @@ def _clean_rows(headers: list[str], raw_rows: list[dict | list]) -> list[dict]:
         except (ValueError, TypeError):
             row["Year"] = ""
         row["Author"] = row.get("Author", "").strip()
-        row["Rob"] = row.get("Rob", "").strip()
-        row["Mom"] = row.get("Mom", "").strip()
+        row["Status"] = row.get("Status", "").strip()
         books.append(row)
     return books
 
@@ -118,7 +117,7 @@ def update_book_status(title: str, author: str, status: str) -> None:
     try:
         author_col = headers.index("Author")
         title_col  = headers.index("Title")
-        rob_col    = headers.index("Rob") + 1  # gspread update_cell is 1-indexed
+        status_col = headers.index("Status") + 1  # gspread update_cell is 1-indexed
     except ValueError:
         return
 
@@ -126,13 +125,16 @@ def update_book_status(title: str, author: str, status: str) -> None:
         row_title  = row[title_col].strip()  if len(row) > title_col  else ""
         row_author = row[author_col].strip() if len(row) > author_col else ""
         if row_title == title and row_author == author:
-            ws.update_cell(row_idx, rob_col, status)
+            ws.update_cell(row_idx, status_col, status)
             return
 
 
+READING_ORDER = {"reading": 0, "borrowed": 1, "hold": 2}
+
+
 def reading_books(sorted_books: list[dict]) -> list[dict]:
-    books = [b for b in sorted_books if b["Rob"].lower() in ("reading", "hold")]
-    return sorted(books, key=lambda b: 0 if b["Rob"].lower() == "reading" else 1)
+    books = [b for b in sorted_books if b["Status"].lower() in READING_ORDER]
+    return sorted(books, key=lambda b: READING_ORDER[b["Status"].lower()])
 
 
 def _unread_by_author(sorted_books: list[dict], exclude_authors: set[str] | None = None) -> list[tuple[str, dict]]:
@@ -140,7 +142,7 @@ def _unread_by_author(sorted_books: list[dict], exclude_authors: set[str] | None
     exclude_authors = exclude_authors or set()
     seen: dict[str, dict] = {}
     for b in sorted_books:
-        if b["Rob"] not in UNREAD:
+        if b["Status"] not in UNREAD:
             continue
         key = b["Author"].lower()
         if key not in exclude_authors and key not in seen:
@@ -202,7 +204,7 @@ def next_to_read(sorted_books: list[dict], n: int = NEXT_COUNT) -> list[dict]:
 def _available_books(sorted_books: list[dict]) -> dict:
     """Books eligible to appear in Next Reads: unread only."""
     return {(b["Title"], b["Author"]): b for b in sorted_books
-            if b["Rob"] in UNREAD}
+            if b["Status"] in UNREAD}
 
 
 def advance_after_status_change(sorted_books: list[dict], changed_title: str, changed_author: str, new_status: str = "") -> list[dict]:
@@ -290,14 +292,14 @@ TABLE_PARTIAL = """
   data-title="{{ b.Title|lower }}"
   data-author="{{ b.Author|lower }}"
   data-series="{{ b.Series|lower }}"
-  data-rob="{{ b.Rob|lower }}"
+  data-status="{{ b.Status|lower }}"
 >
   <td>{{ b.Title }}</td>
   <td style="color:var(--muted)">{{ b.Year }}</td>
-  <td>{{ badge(b.Rob) | safe }}</td>
+  <td>{{ badge(b.Status) | safe }}</td>
   <td><button class="edit-btn" onclick="event.stopPropagation();openEditModal(this)"
     data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-series="{{ b.Series }}"
-    data-year="{{ b.Year }}" data-rob="{{ b.Rob }}" data-mom="{{ b.Mom }}">&#9998;</button></td>
+    data-year="{{ b.Year }}" data-status="{{ b.Status }}">&#9998;</button></td>
 </tr>
 {% endfor %}
 {% endfor %}
@@ -306,17 +308,19 @@ TABLE_PARTIAL = """
 
 READING_PARTIAL = """
 {% for b in reading_books %}
-<div class="book-card{% if b.Rob == 'Hold' %} hold-card{% endif %}">
+<div class="book-card{% if b.Status == 'Hold' %} hold-card{% endif %}">
   <div class="title">{{ b.Title }}</div>
   <div class="author">{{ b.Author or '—' }}</div>
   <div class="series">{{ b.Series }}</div>
   <div class="year">{{ b.Year }}</div>
-  <div class="status-slot">{% if b.Rob != 'Reading' %}{{ badge(b.Rob) | safe }}{% endif %}</div>
+  <div class="status-slot">{% if b.Status == 'Reading' %}<span class="badge badge-shelf-reading">Currently Reading</span>{% else %}{{ badge(b.Status) | safe }}{% endif %}</div>
   <div class="status-btns">
-    {% if b.Rob == 'Hold' %}
+    {% if b.Status == 'Hold' %}
     <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Borrowed</button>
+    {% elif b.Status.lower() == 'borrowed' %}
+    <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
     {% else %}
-    <button class="status-btn s-read" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read" onclick="setStatus(this)">Reading</button>
+    <button class="status-btn s-read" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read" onclick="setStatus(this)">Read</button>
     {% endif %}
   </div>
 </div>
@@ -331,10 +335,10 @@ CARDS_PARTIAL = """
   {% if b.Series %}<div class="series">{{ b.Series }}</div>{% endif %}
   <div class="year">{{ b.Year }}</div>
   <div class="status-btns">
-    <button class="status-btn s-read{% if b.Rob == 'Read' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read"    onclick="setStatus(this)">Read</button>
-    <button class="status-btn s-reading{% if b.Rob == 'Reading' %} btn-active{% endif %}" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Borrowed</button>
-    <button class="status-btn s-hold{% if b.Rob == 'Hold' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">On Hold</button>
-    <button class="status-btn s-na{% if b.Rob == 'n/a' %} btn-active{% endif %}"          data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
+    <button class="status-btn s-read{% if b.Status == 'Read' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read"    onclick="setStatus(this)">Read</button>
+    <button class="status-btn s-reading{% if b.Status == 'Reading' %} btn-active{% endif %}" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Borrowed</button>
+    <button class="status-btn s-hold{% if b.Status == 'Hold' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">On Hold</button>
+    <button class="status-btn s-na{% if b.Status == 'n/a' %} btn-active{% endif %}"          data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
   </div>
   <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
     <button class="libby-btn" data-title="{{ b.Title }}" data-author="{{ b.Author }}" onclick="borrowOnLibby(this)">Borrow on Libby</button>
@@ -538,8 +542,15 @@ TEMPLATE = """<!DOCTYPE html>
   .badge-read    { background: rgba(76,175,125,.18); color: var(--green); }
   .badge-reading { background: rgba(245,166,35,.18); color: var(--amber); }
   .badge-hold    { background: rgba(245,146,58,.18); color: var(--orange); }
+  .badge-borrowed { background: rgba(245,166,35,.18); color: var(--amber); }
   .badge-na      { background: rgba(122,127,153,.12); color: var(--muted); }
   .badge-unread  { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .badge-shelf-reading {
+    background: linear-gradient(135deg, var(--accent), #9b6cff);
+    color: #fff;
+    font-weight: 700;
+    box-shadow: 0 0 10px rgba(108,142,255,.5);
+  }
 
   .count-note { color: var(--muted); font-size: 0.82rem; margin-top: 0.5rem; }
 
@@ -864,17 +875,8 @@ TEMPLATE = """<!DOCTYPE html>
       <div class="edit-field"><label>Author</label><input type="text" id="edit-author"></div>
       <div class="edit-field"><label>Series</label><input type="text" id="edit-series"></div>
       <div class="edit-field"><label>Year</label><input type="number" id="edit-year"></div>
-      <div class="edit-field"><label>Rob</label>
-        <select id="edit-rob">
-          <option value="">—</option>
-          <option value="Read">Read</option>
-          <option value="Reading">Reading</option>
-          <option value="Hold">On Hold</option>
-          <option value="n/a">n/a</option>
-        </select>
-      </div>
-      <div class="edit-field"><label>Mom</label>
-        <select id="edit-mom">
+      <div class="edit-field"><label>Status</label>
+        <select id="edit-status">
           <option value="">—</option>
           <option value="Read">Read</option>
           <option value="Reading">Reading</option>
@@ -1004,12 +1006,12 @@ TEMPLATE = """<!DOCTYPE html>
   let wasFiltering = false;
 
   function matchesRow(row, q) {
-    const rob = row.dataset.rob;
+    const status = row.dataset.status;
     const search = !q || row.dataset.title.includes(q) || row.dataset.author.includes(q) || row.dataset.series.includes(q);
     const filter = activeFilter === 'all' ||
-      (activeFilter === 'unread'  && rob === '') ||
-      (activeFilter === 'read'    && rob === 'read') ||
-      (activeFilter === 'reading' && rob === 'reading');
+      (activeFilter === 'unread'  && status === '') ||
+      (activeFilter === 'read'    && status === 'read') ||
+      (activeFilter === 'reading' && status === 'reading');
     return search && filter;
   }
 
@@ -1315,8 +1317,7 @@ TEMPLATE = """<!DOCTYPE html>
     document.getElementById('edit-author').value = btn.dataset.author;
     document.getElementById('edit-series').value = btn.dataset.series;
     document.getElementById('edit-year').value   = btn.dataset.year;
-    document.getElementById('edit-rob').value    = btn.dataset.rob;
-    document.getElementById('edit-mom').value    = btn.dataset.mom;
+    document.getElementById('edit-status').value = btn.dataset.status;
     document.getElementById('edit-modal').style.display = '';
   }
 
@@ -1347,8 +1348,7 @@ TEMPLATE = """<!DOCTYPE html>
           author: document.getElementById('edit-author').value.trim(),
           series: document.getElementById('edit-series').value.trim(),
           year:   document.getElementById('edit-year').value.trim(),
-          rob:    document.getElementById('edit-rob').value,
-          mom:    document.getElementById('edit-mom').value,
+          status: document.getElementById('edit-status').value,
         })
       });
       const data = await res.json();
@@ -1391,7 +1391,7 @@ def build_grouped_books(sorted_books: list[dict]) -> list[dict]:
         for _, sg in groupby(author_books, key=lambda b: b["Series"].lower()):
             sg_books = list(sg)
             series_groups.append({"series": sg_books[0]["Series"] or "Standalone", "books": sg_books})
-        read_count = sum(1 for b in author_books if b["Rob"].lower() == "read")
+        read_count = sum(1 for b in author_books if b["Status"].lower() == "read")
         read_pct = round(read_count / len(author_books) * 100) if author_books else 0
         grouped.append({
             "author": author_books[0]["Author"] or "—",
@@ -1404,7 +1404,7 @@ def build_grouped_books(sorted_books: list[dict]) -> list[dict]:
 
 def badge(status: str) -> str:
     s = (status or "").strip().lower()
-    cls_map = {"read": "badge-read", "reading": "badge-reading", "hold": "badge-hold", "n/a": "badge-na"}
+    cls_map = {"read": "badge-read", "reading": "badge-reading", "hold": "badge-hold", "borrowed": "badge-borrowed", "n/a": "badge-na"}
     cls = cls_map.get(s, "badge-unread")
     display_map = {"hold": "On Hold"}
     label = display_map.get(s, status.strip())
@@ -1449,8 +1449,7 @@ def edit_book():
     author = data.get("author", "").strip()
     series = data.get("series", "").strip()
     year   = data.get("year",   "").strip()
-    rob    = data.get("rob",    "").strip()
-    mom    = data.get("mom",    "").strip()
+    status = data.get("status", "").strip()
 
     if not orig_title or not title or not author:
         return {"ok": False, "error": "invalid input"}, 400
@@ -1484,7 +1483,7 @@ def edit_book():
                 cells = []
                 for field, value in [("Author", author), ("Series", series),
                                      ("Title", title),  ("Year", year),
-                                     ("Rob", rob),      ("Mom", mom)]:
+                                     ("Status", status)]:
                     if field in col_map:
                         cells.append(gspread.Cell(row_idx, col_map[field] + 1, value))
                 ws.update_cells(cells)
