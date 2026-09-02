@@ -61,3 +61,34 @@ To set up on a new machine:
 - **Branch:** `main`
 - Commit every logical change with a clear message (`feat:`, `fix:`, `docs:`, `chore:`)
 - Always push to GitHub after committing so there is a saved version to revert to
+
+## Developing Without Disrupting the Live App
+The app is kept always-on via a Windows Scheduled Task (`ReadingJourneyApp`), which
+runs `start_app.ps1` → `python app.py` directly out of this checked-out directory on
+port 5000 (reachable on the local network for Mom, e.g. `http://10.0.0.29:5000`).
+Because `app.run(..., debug=True, ...)` uses Flask's auto-reloader, **any edit saved
+to `app.py` in this directory restarts the live server immediately** — so new feature
+work should not happen here directly.
+
+Instead, use a git worktree as a second, independent working directory:
+```bash
+git worktree add ../reading_journey-dev -b feat/<name>
+```
+Then in `reading_journey-dev/`:
+1. Copy the git-ignored `config.py` and `credentials.json` from the live directory
+   (a worktree only contains tracked files).
+2. Run it with the live venv's interpreter on a different port so both copies can run
+   at once:
+   ```bash
+   PORT=5001 ../reading_journey/venv/Scripts/python.exe app.py
+   ```
+   (`PORT` defaults to 5000 if unset, so the live app's behavior is unchanged.)
+3. **Caveat:** both copies point at the same `SHEET_ID`, so status changes made while
+   testing (Read/Borrowed/Hold buttons, the edit modal) write to the real shared
+   Google Sheet — be deliberate before testing anything that calls
+   `update_book_status`/`edit_book`.
+
+To ship a finished feature: merge the feature branch into `main`, then `git pull` in
+the **live** directory — the reloader picks up the new `app.py` and restarts
+automatically. Remove the worktree when done (`git worktree remove
+../reading_journey-dev`).
