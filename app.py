@@ -1146,6 +1146,12 @@ TEMPLATE = """<!DOCTYPE html>
     return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // "Find new books" now runs a Libby catalogue search for the author/series in
+  // "Find new books" opens the picker modal and fills it from the Libby /
+  // OverDrive catalogue (audiobooks at Toronto + Whitby, via /libby_books).
+  // Ticked titles are still appended to the Reading Journey sheet by
+  // submitNewBooks -> /add_books. The old Hardcover /fetch_books route is left
+  // in place but no longer called.
   function findNewBooks(query) {
     _modalQuery = query;
     _modalBooks  = [];
@@ -1157,7 +1163,7 @@ TEMPLATE = """<!DOCTYPE html>
     updateModalCount();
     document.getElementById('add-modal').style.display = '';
 
-    fetch('/fetch_books?query=' + encodeURIComponent(query))
+    fetch('/libby_books?query=' + encodeURIComponent(query))
       .then(r => r.json())
       .then(data => {
         if (!data.ok) {
@@ -1529,6 +1535,137 @@ def update_status():
     except Exception as e:
         app.logger.error(f"update_status failed: {e}")
         return {"ok": False, "error": str(e)}, 500
+
+
+@app.route("/libby_books")
+def libby_books_route():
+    """Find candidate books for the "New books" modal from the Libby / OverDrive
+    catalogue: audiobooks matching the author or series query, across the Toronto
+    and Whitby library systems. Returns the same shape as /fetch_books
+    (series_groups + standalone) so the modal renders unchanged."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    import json as _json
+
+    search_query = request.args.get("query", "").strip()
+    if not search_query:
+        return {"ok": False, "error": "missing query"}, 400
+
+    libraries = ["toronto", "whitby"]
+    headers = {
+        "User-Agent": "ReadingJourney/1.0 (Libby audiobook lookup)",
+        "Accept": "application/json",
+    }
+
+    raw_items: list = []
+    seen: set = set()
+    errors = 0
+    for key in libraries:
+        params = urllib.parse.urlencode(
+            {"query": search_query, "perPage": "48", "mediaTypes": "audiobook"}
+        )
+        url = f"https://thunder.api.overdrive.com/v2/libraries/{key}/media?{params}"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                payload = _json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            app.logger.error(f"Libby/Thunder {key} HTTP {e.code}")
+            errors += 1
+            continue
+        except Exception as e:
+            app.logger.error(f"Libby/Thunder {key} failed: {e}")
+            errors += 1
+            continue
+        for it in payload.get("items", []) or []:
+            # `id` is OverDrive's cross-library title id, so this de-dupes the
+            # same audiobook appearing in both library systems.
+            dedupe = str(it.get("id") or "").strip() or (it.get("title") or "").lower()
+            if dedupe in seen:
+                continue
+            seen.add(dedupe)
+            raw_items.append(it)
+
+    if errors == len(libraries):
+        return {"ok": False, "error": "libby unreachable"}, 502
+
+    existing = {b["Title"].lower() for b in load_books()}
+    q_norm = search_query.casefold().strip()
+
+    def _relevant(item: dict) -> bool:
+        # Thunder's free-text `query` is fuzzy and returns loose matches
+        # (e.g. "Bobiverse" -> "The One and Only Bob"). Keep only titles whose
+        # author or series actually lines up with the searched author/series name.
+        ds = item.get("detailedSeries") or {}
+        for field in (
+            (item.get("firstCreatorName") or "").casefold(),
+            (ds.get("seriesName") or item.get("series") or "").casefold(),
+        ):
+            if field and (q_norm in field or field in q_norm):
+                return True
+        return False
+
+    series_slots: dict = {}     # (series, position, title) -> book dict
+    standalone_seen: set = set()
+    standalone: list = []
+
+    for it in raw_items:
+        title = (it.get("title") or "").strip()
+        # OverDrive appends bundle markers like ", with eBook" to some titles.
+        title = re.sub(
+            r",\s*with (?:e[- ]?book|pdf|bonus\b.*|audiobook)$", "", title, flags=re.I
+        ).strip()
+        if not title or title.lower() in existing:
+            continue
+        type_field = it.get("type")
+        type_key = (
+            type_field.get("id") if isinstance(type_field, dict) else type_field
+        ) or ""
+        if str(type_key).lower() and str(type_key).lower() != "audiobook":
+            continue
+        if not _relevant(it):
+            continue
+
+        pub = str(it.get("publishDate") or it.get("publishDateText") or "")
+        ym = re.search(r"(\d{4})", pub)
+        year = ym.group(1) if ym else ""
+        author_name = it.get("firstCreatorName") or search_query
+        # Thunder descriptions are HTML; the detail modal shows them as plain text.
+        description = re.sub(r"<[^>]+>", "", it.get("description") or "").strip()
+
+        ds = it.get("detailedSeries") or {}
+        series_name = (ds.get("seriesName") or it.get("series") or "").strip()
+        if series_name:
+            try:
+                position = float(ds.get("readingOrder") or ds.get("rank") or 0)
+            except (TypeError, ValueError):
+                position = 0.0
+            key = (series_name, position, title.lower())
+            if key not in series_slots:
+                series_slots[key] = {
+                    "title": title, "year": year, "series": series_name,
+                    "position": position, "author": author_name,
+                    "description": description,
+                }
+        else:
+            norm = title.lower().split(":")[0].strip()
+            if norm not in standalone_seen:
+                standalone_seen.add(norm)
+                standalone.append({
+                    "title": title, "year": year, "series": "",
+                    "author": author_name, "description": description,
+                })
+
+    series_map: dict = {}
+    for (series_name, _pos, _t), book in series_slots.items():
+        series_map.setdefault(series_name, []).append(book)
+    for bks in series_map.values():
+        bks.sort(key=lambda x: (x.get("position") or 0, x["year"] or "9999"))
+
+    standalone.sort(key=lambda x: x["year"] or "9999")
+    series_groups = [{"series": s, "books": bks} for s, bks in sorted(series_map.items())]
+    return {"ok": True, "series_groups": series_groups, "standalone": standalone}
 
 
 @app.route("/fetch_books")
