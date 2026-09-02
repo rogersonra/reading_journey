@@ -317,7 +317,7 @@ READING_PARTIAL = """
   <div class="status-slot">{% if b.Status == 'Reading' %}<span class="badge badge-shelf-reading">Currently Reading</span>{% else %}{{ badge(b.Status) | safe }}{% endif %}</div>
   <div class="status-btns">
     {% if b.Status == 'Hold' %}
-    <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Borrowed</button>
+    <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Borrowed" onclick="setStatus(this)">Borrowed</button>
     {% elif b.Status.lower() == 'borrowed' %}
     <button class="status-btn s-reading" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Reading</button>
     {% else %}
@@ -337,7 +337,7 @@ CARDS_PARTIAL = """
   <div class="year">{{ b.Year }}</div>
   <div class="status-btns">
     <button class="status-btn s-read{% if b.Status == 'Read' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Read"    onclick="setStatus(this)">Read</button>
-    <button class="status-btn s-reading{% if b.Status == 'Reading' %} btn-active{% endif %}" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Reading" onclick="setStatus(this)">Borrowed</button>
+    <button class="status-btn s-reading{% if b.Status == 'Borrowed' %} btn-active{% endif %}" data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Borrowed" onclick="setStatus(this)">Borrowed</button>
     <button class="status-btn s-hold{% if b.Status == 'Hold' %} btn-active{% endif %}"       data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="Hold"    onclick="setStatus(this)">On Hold</button>
     <button class="status-btn s-na{% if b.Status == 'n/a' %} btn-active{% endif %}"          data-title="{{ b.Title }}" data-author="{{ b.Author }}" data-status="n/a"     onclick="setStatus(this)">n/a</button>
   </div>
@@ -840,6 +840,7 @@ TEMPLATE = """<!DOCTYPE html>
       <button class="filter-btn"        data-filter="unread" onclick="setFilter(this)">Unread</button>
       <button class="filter-btn"        data-filter="read"   onclick="setFilter(this)">Read</button>
       <button class="filter-btn"        data-filter="reading"onclick="setFilter(this)">Reading</button>
+      <button class="filter-btn"        data-filter="borrowed"onclick="setFilter(this)">Borrowed</button>
     </div>
     <button id="toggleAllBtn" onclick="toggleAll()">Expand All</button>
   </div>
@@ -881,6 +882,7 @@ TEMPLATE = """<!DOCTYPE html>
           <option value="">—</option>
           <option value="Read">Read</option>
           <option value="Reading">Reading</option>
+          <option value="Borrowed">Borrowed</option>
           <option value="Hold">On Hold</option>
           <option value="n/a">n/a</option>
         </select>
@@ -1012,7 +1014,8 @@ TEMPLATE = """<!DOCTYPE html>
     const filter = activeFilter === 'all' ||
       (activeFilter === 'unread'  && status === '') ||
       (activeFilter === 'read'    && status === 'read') ||
-      (activeFilter === 'reading' && status === 'reading');
+      (activeFilter === 'reading' && status === 'reading') ||
+      (activeFilter === 'borrowed' && status === 'borrowed');
     return search && filter;
   }
 
@@ -1510,7 +1513,7 @@ def update_status():
     title  = data.get("title", "").strip()
     author = data.get("author", "").strip()
     status = data.get("status", "").strip()
-    if not title or status not in {"Read", "Reading", "Hold", "n/a"}:
+    if not title or status not in {"Read", "Reading", "Hold", "Borrowed", "n/a"}:
         return {"ok": False, "error": "invalid input"}, 400
     try:
         update_book_status(title, author, status)
