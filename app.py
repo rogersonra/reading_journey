@@ -41,6 +41,36 @@ def _clean_rows(headers: list[str], raw_rows: list[dict | list]) -> list[dict]:
     return books
 
 
+_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.I)
+
+
+def _dedupe_key(title: str, author: str = "") -> str:
+    """Normalise a (title, author) pair for "is this already in the list?".
+
+    Title: lowercase, drop any ``: subtitle`` tail and a trailing ``, a novel``
+    / ``(unabridged)`` marker, strip a leading article, fold ``&`` to ``and``
+    and remove the remaining punctuation, so a Libby title like ``"Martian: A
+    Novel"`` collapses onto a sheet row titled ``"The Martian"``. Deliberately
+    conservative -- it does not split on `` - `` because series titles often use
+    it as a real separator (``"Star Wars - Thrawn"``).
+
+    Author: reduced to a lowercased surname (last whitespace-separated token,
+    punctuation removed) so ``"John Grisham"`` and a mis-typed ``"Jon Grisham"``
+    still match, but a same-titled book by a *different* author does not.
+    """
+    t = (title or "").strip().lower()
+    t = re.split(r"\s*:\s+", t, maxsplit=1)[0]
+    t = re.sub(r"\s*[(\[][^)\]]*[)\]]\s*$", "", t)
+    t = re.sub(r",\s*a (?:novel|memoir|story|thriller|mystery)\s*$", "", t)
+    t = t.replace("&", " and ")
+    t = _ARTICLE_RE.sub("", t)
+    t = re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+    parts = re.sub(r"[^a-z0-9 ]+", "", (author or "").strip().lower()).split()
+    surname = parts[-1] if parts else ""
+    return f"{t}|{surname}"
+
+
 def load_books_from_sheets() -> list[dict]:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -1178,6 +1208,13 @@ TEMPLATE = """<!DOCTYPE html>
             </label>
           </div>` : '';
 
+        const alreadyIn = data.already_in_list || 0;
+        if (alreadyIn && totalBooks) {
+          html += `<div style="padding:0.3rem 0 0.9rem;font-size:0.82rem;color:var(--muted)">
+            ${alreadyIn} matching audiobook${alreadyIn !== 1 ? 's are' : ' is'} already in your Reading Journey &mdash; hidden.
+          </div>`;
+        }
+
         for (const sg of data.series_groups) {
           const seriesEsc = esc(sg.series).replace(/'/g, '&#39;');
           html += `<div class="modal-series-group">
@@ -1221,7 +1258,9 @@ TEMPLATE = """<!DOCTYPE html>
           html += `</div>`;
         }
 
-        if (!html) html = '<p style="color:var(--muted)">No new books found.</p>';
+        if (!totalBooks) {
+          html += `<p style="color:var(--muted)">${alreadyIn ? 'Every matching audiobook is already in your Reading Journey.' : 'No new books found.'}</p>`;
+        }
         document.getElementById('add-modal-body').innerHTML = html;
         updateModalCount();
 
@@ -1590,7 +1629,11 @@ def libby_books_route():
     if errors == len(libraries):
         return {"ok": False, "error": "libby unreachable"}, 502
 
-    existing = {b["Title"].lower() for b in load_books()}
+    # A book already in the sheet (in *any* status) is not a "new" book, so it
+    # is filtered out below; `already_in_list` is reported so the modal can say
+    # how many relevant audiobooks it hid for that reason.
+    existing = {_dedupe_key(b["Title"], b["Author"]) for b in load_books()}
+    already_in_list = 0
     q_norm = search_query.casefold().strip()
 
     def _relevant(item: dict) -> bool:
@@ -1616,7 +1659,7 @@ def libby_books_route():
         title = re.sub(
             r",\s*with (?:e[- ]?book|pdf|bonus\b.*|audiobook)$", "", title, flags=re.I
         ).strip()
-        if not title or title.lower() in existing:
+        if not title:
             continue
         type_field = it.get("type")
         type_key = (
@@ -1626,11 +1669,14 @@ def libby_books_route():
             continue
         if not _relevant(it):
             continue
+        author_name = it.get("firstCreatorName") or search_query
+        if _dedupe_key(title, it.get("firstCreatorName") or "") in existing:
+            already_in_list += 1
+            continue
 
         pub = str(it.get("publishDate") or it.get("publishDateText") or "")
         ym = re.search(r"(\d{4})", pub)
         year = ym.group(1) if ym else ""
-        author_name = it.get("firstCreatorName") or search_query
         # Thunder descriptions are HTML; the detail modal shows them as plain text.
         description = re.sub(r"<[^>]+>", "", it.get("description") or "").strip()
 
@@ -1665,7 +1711,12 @@ def libby_books_route():
 
     standalone.sort(key=lambda x: x["year"] or "9999")
     series_groups = [{"series": s, "books": bks} for s, bks in sorted(series_map.items())]
-    return {"ok": True, "series_groups": series_groups, "standalone": standalone}
+    return {
+        "ok": True,
+        "series_groups": series_groups,
+        "standalone": standalone,
+        "already_in_list": already_in_list,
+    }
 
 
 @app.route("/fetch_books")
