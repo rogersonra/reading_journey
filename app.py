@@ -1350,7 +1350,10 @@ TEMPLATE = """<!DOCTYPE html>
         const rg = document.getElementById('reading-grid');
         const rs = document.getElementById('reading-section');
         if (rg) { rg.innerHTML = data.reading_html; rs.style.display = data.reading_html.trim() ? '' : 'none'; }
-        applyCollapseState();
+        // Server re-renders the table with every row expanded; start it fully
+        // collapsed again (matching the initial page load) rather than dumping
+        // the whole list open.
+        collapseAll();
         filterTable();
         closeModal();
       } else {
