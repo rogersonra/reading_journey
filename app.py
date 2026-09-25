@@ -169,6 +169,58 @@ def reading_books(sorted_books: list[dict]) -> list[dict]:
     return sorted(books, key=lambda b: READING_ORDER[b["Status"].lower()])
 
 
+LIBBY_LIBRARIES = ["toronto", "whitby"]
+LIBBY_AVAILABILITY_TTL = 300  # seconds before re-checking a (title, author) pair
+_libby_availability_cache: dict[str, tuple[float, bool]] = {}
+
+
+def _libby_has_audiobook(title: str, author: str) -> bool:
+    """True if `title` by `author` is owned as an audiobook (available now or on a
+    wait list) at any library in LIBBY_LIBRARIES. Used to gate Next Reads so a book
+    isn't added unless it's actually on Libby. Fails closed: a lookup error for a
+    library counts the same as that library not having it."""
+    import json as _json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from concurrent.futures import ThreadPoolExecutor
+
+    key = f"{title.strip().lower()}|{author.strip().lower()}"
+    now = time.monotonic()
+    cached = _libby_availability_cache.get(key)
+    if cached and now - cached[0] < LIBBY_AVAILABILITY_TTL:
+        return cached[1]
+
+    headers = {
+        "User-Agent": "ReadingJourney/1.0 (Libby audiobook lookup)",
+        "Accept": "application/json",
+    }
+    params = urllib.parse.urlencode(
+        {"perPage": "24", "mediaTypes": "audiobook", "title": title, "creator": author}
+    )
+
+    def _check(lib_key: str) -> bool:
+        url = f"https://thunder.api.overdrive.com/v2/libraries/{lib_key}/media?{params}"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as r:
+                payload = _json.loads(r.read())
+        except Exception as e:
+            app.logger.warning(f"Libby availability check ({lib_key}) failed for {title!r}: {e}")
+            return False
+        for it in payload.get("items", []) or []:
+            owned = int(it.get("ownedCopies", 0) or 0)
+            if bool(it.get("isOwned")) or owned > 0:
+                return True
+        return False
+
+    with ThreadPoolExecutor(max_workers=len(LIBBY_LIBRARIES)) as pool:
+        found = any(pool.map(_check, LIBBY_LIBRARIES))
+
+    _libby_availability_cache[key] = (now, found)
+    return found
+
+
 def _unread_by_author(sorted_books: list[dict], exclude_authors: set[str] | None = None) -> list[tuple[str, dict]]:
     """Return [(author_lower, first_unread_book)] sorted by last name, skipping excluded authors."""
     exclude_authors = exclude_authors or set()
@@ -183,7 +235,9 @@ def _unread_by_author(sorted_books: list[dict], exclude_authors: set[str] | None
 
 
 def _next_from_rotation(ordered: list[tuple[str, dict]], last_author: str) -> tuple[str, dict] | None:
-    """Return the next (author_lower, book) after last_author in the ordered list."""
+    """Return the next (author_lower, book) after last_author in the ordered list that
+    is on Libby as an audiobook, skipping any that aren't. Walks at most one full pass
+    over `ordered`; returns None if nothing in it qualifies."""
     if not ordered:
         return None
     last = last_author.lower()
@@ -192,7 +246,13 @@ def _next_from_rotation(ordered: list[tuple[str, dict]], last_author: str) -> tu
         if last_name(akey) > last_name(last):
             start = i
             break
-    return ordered[start % len(ordered)]
+    n = len(ordered)
+    for offset in range(n):
+        entry = ordered[(start + offset) % n]
+        _, book = entry
+        if _libby_has_audiobook(book["Title"], book["Author"]):
+            return entry
+    return None
 
 
 def next_to_read(sorted_books: list[dict], n: int = NEXT_COUNT) -> list[dict]:
@@ -223,9 +283,16 @@ def next_to_read(sorted_books: list[dict], n: int = NEXT_COUNT) -> list[dict]:
             start = i
             break
 
-    count = min(n, total)
-    selected = [ordered[(start + i) % total][1] for i in range(count)]
-    new_last = ordered[(start + count - 1) % total][0]
+    selected = []
+    new_last = last
+    for offset in range(total):
+        akey, book = ordered[(start + offset) % total]
+        if not _libby_has_audiobook(book["Title"], book["Author"]):
+            continue
+        selected.append(book)
+        new_last = akey
+        if len(selected) == n:
+            break
 
     state["last_author"] = new_last
     state["next_reads"] = [{"title": b["Title"], "author": b["Author"]} for b in selected]
@@ -1594,7 +1661,7 @@ def libby_books_route():
     if not search_query:
         return {"ok": False, "error": "missing query"}, 400
 
-    libraries = ["toronto", "whitby"]
+    libraries = LIBBY_LIBRARIES
     headers = {
         "User-Agent": "ReadingJourney/1.0 (Libby audiobook lookup)",
         "Accept": "application/json",
